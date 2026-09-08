@@ -28,11 +28,11 @@ export function realFuture(file) {
 export const under = (file, root) => { const rel = path.relative(root, file); return rel === '' || (!rel.startsWith('..' + path.sep) && rel !== '..' && !path.isAbsolute(rel)); };
 export function which(name, env = process.env) {
   const vars = Object.fromEntries(Object.entries(env).map(([k,v]) => [k.toUpperCase(),v]));
-  const extensions = path.extname(name) ? [''] : ['', ...(vars.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';')];
+  const names = platform.executableNames(name, env);
   const found = [];
   for (const dir of (vars.PATH || '').split(path.delimiter).filter(Boolean)) {
-    for (const ext of extensions) {
-      const file = path.resolve(dir.replace(/^"|"$/g, ''), name + ext);
+    for (const executable of names) {
+      const file = path.resolve(dir.replace(/^"|"$/g, ''), executable);
       try { if (fs.statSync(file).isFile() && !found.some(f => fs.realpathSync(f) === fs.realpathSync(file))) found.push(file); } catch {}
     }
   }
@@ -51,8 +51,9 @@ export function context(overrides = {}) {
   // Do not use platform.fileAttributes here: its internal probe uses the caller's cwd.
   ctx.attributes ||= async file => {
     if (dirs.id !== 'win32') return null;
-    const ps = path.join(env.SYSTEMROOT || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-    const r = ctx.run(ps, ['-NoProfile','-NonInteractive','-Command', "[int64](Get-Item -LiteralPath '" + file.replaceAll("'", "''") + "' -Force -ErrorAction Stop).Attributes"]);
+    const probe = platform.fileAttributesProbe(file, env);
+    if (!probe) return null;
+    const r = ctx.run(probe.file, probe.args);
     const bits = r.status === 0 ? Number(r.stdout.trim()) : NaN;
     return Number.isFinite(bits) ? { bits } : null;
   };
@@ -103,9 +104,7 @@ export async function survey(options, ctx) {
   if (!npm.root) warnings.push('npm root -g unavailable; using Node PATH/PATHEXT search.');
   const candidates = {}, cliErrors = [], clis = {};
   for (const name of ['claude','codex','agy']) {
-    const authoritative = name === 'claude' && npm.root ? path.join(npm.root,'@anthropic-ai','claude-code','bin','claude.exe') :
-      name === 'codex' && npm.root ? path.join(npm.root,'@openai','codex','bin','codex.js') :
-      name === 'agy' && ctx.env.LOCALAPPDATA ? path.join(ctx.env.LOCALAPPDATA,'agy','bin','agy.exe') : null;
+    const authoritative = platform.vendorBinary(name, {npmRoot:npm.root, env:ctx.env});
     candidates[name] = authoritative && exists(authoritative) ? [authoritative] : which(name, ctx.env);
     const list = candidates[name];
     if (list.length > 1) cliErrors.push(fail('E-AMBIGUOUS-BINARY', name + ': ' + list.join(', ')));
@@ -126,9 +125,9 @@ export async function survey(options, ctx) {
     }
     if (name === 'agy') { const help = invocation(file, ['--help'], ctx); clis[name].printTimeout = help.status === 0 && help.stdout.includes('--print-timeout'); warnings.push('agy --print-timeout version floor UNVERIFIED; disabled by policy.'); }
   }
-  const desktopBin = path.join(ctx.env.LOCALAPPDATA || ctx.dirs.home, 'OpenAI','Codex','bin');
+  const desktop = platform.desktopCliLayout({env:ctx.env, home:ctx.dirs.home});
   const desktopClis = [];
-  if (exists(desktopBin)) for (const name of fs.readdirSync(desktopBin).sort()) { const file = path.join(desktopBin,name,'codex.exe'); if (exists(file)) desktopClis.push({ path: file, status: 'found, not usable by 0.1.0' }); }
+  if (desktop && exists(desktop.root)) for (const name of fs.readdirSync(desktop.root).sort()) { const file = path.join(desktop.root,name,desktop.executable); if (exists(file)) desktopClis.push({ path: file, status: 'found, not usable by 0.1.0' }); }
   add('clis', { clis, desktopClis }, cliErrors);
   const hosts = [], hostErrors = [];
   for (const [surface, paths] of Object.entries(hostPaths(ctx))) for (const file of paths) {

@@ -2,8 +2,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { nativePlatform } from './appdirs.mjs';
 
-export async function safewrite(file, data, { io = fs, sleep = ms => new Promise(r => setTimeout(r, ms)), exclusive = false, mode = 0o600, platform = process.platform, onWarning = warning => process.emitWarning(JSON.stringify(warning)) } = {}) {
+export async function safewrite(file, data, { io = fs, sleep = ms => new Promise(r => setTimeout(r, ms)), exclusive = false, mode = 0o600, platform = nativePlatform, onWarning = warning => process.emitWarning(JSON.stringify(warning)) } = {}) {
   const temp = file + '.council-tmp-' + randomUUID();
   const guard = file + '.council-tmp-publish', warnings = [];
   let fd, created = false, claimed = false, cleanupAttempted = false, existingMode;

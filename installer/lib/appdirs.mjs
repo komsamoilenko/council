@@ -2,6 +2,7 @@
 import path from 'node:path';
 import os from 'node:os';
 import version from '../../src/version.js';
+export const nativePlatform = process.platform;
 
 export function appdirs({ env = process.env, home, appVersion = version.APP_VERSION, profile = 'default' } = {}) {
   const id = env.COUNCIL_PLATFORM || process.platform;

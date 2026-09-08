@@ -335,6 +335,24 @@ function childEnvAllow() { return ['SystemRoot','windir','SystemDrive','COMSPEC'
 function childPath(nodeDir) { const sys = tokens().SYSTEMROOT; return [sys && path.join(sys,'System32'),sys,sys && path.join(sys,'System32','Wbem'),sys && path.join(sys,'System32','WindowsPowerShell','v1.0'),nodeDir].filter(Boolean).join(path.delimiter); }
 // Deliberate split: profile paths are installer-controlled data; ps() and dpapi() bind to known-good System32 binaries.
 function systemBinaries() { const sys = tokens().SYSTEMROOT; if (!sys || !isAbsoluteNative(sys)) return {}; return { powershell: path.join(sys,'System32','WindowsPowerShell','v1.0','powershell.exe'), taskkill: path.join(sys,'System32','taskkill.exe'), tasklist: path.join(sys,'System32','tasklist.exe') }; }
+function executableNames(name, env = process.env) {
+  const vars=Object.fromEntries(Object.entries(env).map(([k,v])=>[k.toUpperCase(),v]));
+  return (path.extname(name) ? [''] : ['', ...(vars.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';')]).map(ext=>name+ext);
+}
+function vendorBinary(name, {npmRoot, env = process.env} = {}) {
+  if (name==='claude' && npmRoot) return path.join(npmRoot,'@anthropic-ai','claude-code','bin','claude.exe');
+  if (name==='codex' && npmRoot) return path.join(npmRoot,'@openai','codex','bin','codex.js');
+  if (name==='agy' && env.LOCALAPPDATA) return path.join(env.LOCALAPPDATA,'agy','bin','agy.exe');
+  return null;
+}
+function desktopCliLayout({env = process.env, home = homeDir()} = {}) {
+  return {root:path.join(env.LOCALAPPDATA || home,'OpenAI','Codex','bin'), executable:'codex.exe'};
+}
+function fileAttributesProbe(file, env = process.env) {
+  const vars=Object.fromEntries(Object.entries(env).map(([k,v])=>[k.toUpperCase(),v]));
+  return {file:path.join(vars.SYSTEMROOT || 'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe'),
+    args:['-NoProfile','-NonInteractive','-Command',"[int64](Get-Item -LiteralPath '"+file.replaceAll("'","''")+"' -Force -ErrorAction Stop).Attributes"]};
+}
 function npmRootInfo(machine = {}) {
   const t = tokens(), candidate = machine.npm_root_g;
   const fallback = t.APPDATA && path.join(t.APPDATA,'npm','node_modules');
@@ -428,6 +446,7 @@ function secretGet(name) { return dpapi(name,'unprotect',fs.readFileSync(secretP
 function secretSet(name,value) { const p = secretPath(name); const blob = dpapi(name,'protect',value); fs.mkdirSync(path.dirname(p),{recursive:true}); fs.writeFileSync(p,blob,{mode:0o600}); }
 function secretDelete(name) { const p = secretPath(name); try { fs.unlinkSync(p); } catch(e) { if(e.code !== 'ENOENT') throw e; } }
 module.exports = {
+  executableNames, vendorBinary, desktopCliLayout, fileAttributesProbe,
   killPid, childrenOf,
   id:'win32', implemented:{proc:true,secrets:true,fileAttributes:true}, notImplementedReason:null,
   appDirs, homeDir, tokens, caseFold, isAbsoluteNative, sameFile:(a,b) => caseFold(real(a)) === caseFold(real(b)), childEnvAllow, childPath, nullDevice:() => 'NUL', allowedRootsBase, systemBinaries,

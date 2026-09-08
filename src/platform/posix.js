@@ -14,6 +14,10 @@ module.exports = function make(id) {
   const fail = c => () => { throw new PlatformNotImplemented(c); };
   const asyncFail = c => async () => { throw new PlatformNotImplemented(c); };
   return {
+    executableNames: name => [name],
+    vendorBinary: (name, {npmRoot} = {}) => name === 'codex' && npmRoot ? path.join(npmRoot,'@openai','codex','bin','codex.js') : null,
+    desktopCliLayout: () => null,
+    fileAttributesProbe: () => null,
     id, implemented: { proc: false, secrets: false, fileAttributes: false }, notImplementedReason: 'Process supervision is not implemented on ' + id + ' in council 0.1.0; use Windows.',
     appDirs, homeDir, tokens, caseFold, sameFile: (a,b) => caseFold(real(a)) === caseFold(real(b)), isAbsoluteNative: p => typeof p === 'string' && p.startsWith('/'),
     childEnvAllow: () => ['HOME','USER','LOGNAME','LANG','LC_ALL','LC_CTYPE','TMPDIR','XDG_CONFIG_HOME','XDG_DATA_HOME','XDG_STATE_HOME'],
