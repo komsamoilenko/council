@@ -1,0 +1,10 @@
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
+
+# runtime state never belongs in the repo
+jobs/
+ledger/
+secrets/
+*.bak-*
