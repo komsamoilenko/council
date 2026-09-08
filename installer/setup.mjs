@@ -10,10 +10,12 @@ import { planReport, detectReport } from './lib/report.mjs';
 import { scanDuplicates, reportTarget, publishDuplicate, duplicateText } from './lib/duplicates.mjs';
 import { newTask } from './lib/new-task.mjs';
 import { safewrite } from './lib/safewrite.mjs';
+import { forceUnlock } from './lib/lock.mjs';
 
-const verbs = ['detect','plan','apply','verify','update','uninstall','install-prereqs','login','migrate','rollback','set-key','duplicates','new-task'];
+const verbs = ['detect','plan','apply','verify','update','uninstall','install-prereqs','login','migrate','rollback','set-key','duplicates','new-task','unlock'];
 const globalValues = ['profile','log'], globalSwitches = ['json','no-color','verbose'];
 const flags = {
+  unlock: { values:[], switches:['force-unlock'] },
   detect: { values:['vault','out'], switches:['duplicates'] },
   plan: { values:['vault','merge','hosts','register-as','owner','chat-language','answers'], switches:['conventions','relocate-runtime','large-vault','git-init','allow-unsupported-platform','duplicates'] },
   duplicates: { values:['vault','max-files','out'], switches:[] },
@@ -21,7 +23,7 @@ const flags = {
 };
 export const usage = `Usage: node installer/setup.mjs <verb> [flags]
 Verbs: ${verbs.join(' ')}
-Implemented: detect plan duplicates new-task. Other verbs are not in this build.
+Implemented: detect plan duplicates new-task unlock. Other verbs are not in this build.
 Global: --profile <id> --json --no-color --verbose --log <file>
 detect: --vault <path> --duplicates --out <file>
 plan: --vault <path> --merge block|sidecar|none|ask --conventions --relocate-runtime
@@ -29,6 +31,7 @@ plan: --vault <path> --merge block|sidecar|none|ask --conventions --relocate-run
       --answers <file> --large-vault --git-init --allow-unsupported-platform --duplicates
 duplicates: --vault <path> --max-files <1..200000> --out <etc/reports/file>
 new-task: <slug> --vault <path> --agents claude,codex,gemini
+unlock: --force-unlock (recover stale setup lock/claim; live owners stay refused)
 --log is accepted but does not write: detect/plan permit only their declared output files.
 Exit codes: 0 ok; 1 step failed; 2 usage/precondition; 3 stale plan; 4 conflict;
             5 open journal/declined; 6 unsupported platform; 7 verify drift.
@@ -52,6 +55,7 @@ export function parse(argv) {
   }
   if (positional.length !== (verb === 'new-task' ? 1 : 0)) throw fail('E-USAGE','Unexpected or missing positional argument.');
   if (options.profile && !/^[a-z0-9][a-z0-9_-]{0,31}$/.test(options.profile)) throw fail('E-USAGE','Invalid --profile id.');
+  if (verb === 'unlock' && !options['force-unlock']) throw fail('E-USAGE','unlock requires --force-unlock.');
   return {verb,options,slug:positional[0]};
 }
 export async function run(argv, overrides = {}) {
@@ -64,6 +68,12 @@ export async function run(argv, overrides = {}) {
     options = {...loadAnswers(command.options.answers),...command.options};
     const ctx = context({...overrides,profile:options.profile || 'default'});
     let result, human, exitCode = 0;
+    if (command.verb === 'unlock') {
+      if (await linked(ctx.dirs.etc,ctx)) throw fail('E-REPARSE-TARGET',ctx.dirs.etc);
+      result = exists(ctx.dirs.etc) ? await forceUnlock(ctx.dirs.etc, overrides.lockOptions) : { ok:true };
+      stdout(options.json ? JSON.stringify(result)+'\n' : (result.ok ? 'Setup lock cleared.\n' : JSON.stringify(result)+'\n'));
+      return result.ok ? 0 : result.exitCode;
+    }
     if (command.verb === 'plan') {
       const built = await buildPlan(options,ctx);
       result = built.plan; human = planReport(result);

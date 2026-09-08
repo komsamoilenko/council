@@ -2,7 +2,7 @@
 # Read-only installer decisions
 
 These choices interpret SPEC.md together with SPEC-AMENDMENTS.md. The foundation
-modules are unchanged. A-03 remains deferred to task 08.
+modules are unchanged. A-03 is implemented by the task-08 lock recovery and explicit unlock command.
 
 1. **Brief's blanket vault-write prohibition versus §7.13.** `new-task` is the
    explicit exception: it creates task files and optionally appends the existing

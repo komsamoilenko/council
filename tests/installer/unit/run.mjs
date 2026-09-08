@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 let passed = 0, failed = 0;
-for (const name of ['safewrite','appdirs','markers','tomlblock','manifest','journal','lock','backup','cloudsync','dialogue','report']) {
+for (const name of ['audit','safewrite','appdirs','markers','tomlblock','manifest','journal','lock','backup','cloudsync','dialogue','report']) {
   let count = 0, failures = 0;
   const test = async (label, run) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'council-unit-'));

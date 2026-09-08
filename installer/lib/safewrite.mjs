@@ -3,11 +3,27 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-export async function safewrite(file, data, { io = fs, sleep = ms => new Promise(r => setTimeout(r, ms)), exclusive = false, mode = 0o600 } = {}) {
+export async function safewrite(file, data, { io = fs, sleep = ms => new Promise(r => setTimeout(r, ms)), exclusive = false, mode = 0o600, platform = process.platform, onWarning = warning => process.emitWarning(JSON.stringify(warning)) } = {}) {
   const temp = file + '.council-tmp-' + randomUUID();
-  let fd, created = false;
+  const guard = file + '.council-tmp-publish', warnings = [];
+  let fd, created = false, claimed = false, cleanupAttempted = false, existingMode;
+  const cleanupGuard = async () => {
+    if (!claimed || cleanupAttempted) return;
+    cleanupAttempted = true;
+    for (let retry = 0; ; retry++) {
+      try { io.rmdirSync(guard); claimed = false; return; }
+      catch (error) {
+        const warning = { code: error.code, path: guard, message: 'Publication guard cleanup failed; remove this directory if it remains.' };
+        warnings.push(warning); onWarning(warning);
+        if (!['EBUSY','EPERM'].includes(error.code) || retry === 5) return;
+        await sleep(200);
+      }
+    }
+  };
   try {
-    fd = io.openSync(temp, 'wx', mode);
+    try { existingMode = io.statSync(file).mode & 0o7777; }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    fd = io.openSync(temp, 'wx', existingMode ?? mode);
     created = true;
     const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data);
     let offset = 0;
@@ -16,34 +32,46 @@ export async function safewrite(file, data, { io = fs, sleep = ms => new Promise
       if (!n) throw new Error('short_write');
       offset += n;
     }
+    // Restore exact existing POSIX permissions after writes, independent of umask.
+    if (existingMode !== undefined && platform !== 'win32') io.fchmodSync(fd, existingMode);
     io.fsyncSync(fd);
-    io.closeSync(fd); fd = undefined;
+    const closing = fd; fd = undefined; io.closeSync(closing);
+    if (exclusive) {
+      for (let retry = 0; ; retry++) {
+        try { io.mkdirSync(guard); claimed = true; break; }
+        catch (error) {
+          if (error.code === 'EEXIST') error.code = 'EBUSY';
+          if (!['EBUSY','EPERM'].includes(error.code) || retry === 5) throw error;
+          await sleep(200);
+        }
+      }
+      let exists = true;
+      try { io.lstatSync(file); } catch (e) { if (e.code !== 'ENOENT') throw e; exists = false; }
+      if (exists) throw Object.assign(new Error('destination_exists'), { code: 'EEXIST' });
+    }
+    // Only a failed rename is repeatable; cleanup never re-enters publication.
     for (let retry = 0; ; retry++) {
-      try {
-        // Serialize cooperating exclusive publishers while retaining temp/fsync/rename.
-        // An abandoned guard is refused, never treated as proof that its owner is gone.
-        const guard = file + '.council-tmp-publish';
-        let claimed = false;
-        try {
-          if (exclusive) {
-            try { io.mkdirSync(guard); claimed = true; }
-            catch (error) { if (error.code === 'EEXIST') error.code = 'EBUSY'; throw error; }
-            let exists = true;
-            try { io.lstatSync(file); } catch (e) { if (e.code !== 'ENOENT') throw e; exists = false; }
-            if (exists) throw Object.assign(new Error('destination_exists'), { code: 'EEXIST' });
-          }
-          io.renameSync(temp, file);
-        } finally { if (claimed) io.rmdirSync(guard); }
-        break;
-      } catch (error) {
+      try { io.renameSync(temp, file); break; }
+      catch (error) {
         if (!['EBUSY', 'EPERM'].includes(error.code) || retry === 5) throw error;
         await sleep(200);
       }
     }
-    return { path: file, bytes: bytes.length };
+    // Node on Windows has no portable directory fsync: file bytes are durable,
+    // but rename durability against power loss cannot be guaranteed there.
+    if (platform !== 'win32') {
+      const directory = io.openSync(path.dirname(file), 'r');
+      try { io.fsyncSync(directory); } finally { io.closeSync(directory); }
+    }
+    await cleanupGuard();
+    return { path: file, bytes: bytes.length, warnings };
   } finally {
-    if (fd !== undefined) io.closeSync(fd);
-    if (created) { try { io.unlinkSync(temp); } catch (e) { if (e.code !== 'ENOENT') throw e; } }
+    try {
+      if (fd !== undefined) { const closing = fd; fd = undefined; io.closeSync(closing); }
+    } finally {
+      try { if (created) { try { io.unlinkSync(temp); } catch (e) { if (e.code !== 'ENOENT') throw e; } } }
+      finally { await cleanupGuard(); }
+    }
   }
 }
 

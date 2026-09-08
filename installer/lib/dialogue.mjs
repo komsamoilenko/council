@@ -11,6 +11,7 @@ const catalogue = {
   'E-VAULT-UNWRITABLE': [2, 'The first vault write failed', 'plan cannot test writability without writing; this is the first write council attempts', 'Make the vault writable and re-run apply.'],
   'E-VAULT-CONTAINS-APP-DATA': [2, 'The vault contains council app data', 'notes and the local installation must be separate', 'Choose a vault outside the council installation.'],
   'E-VAULT-ROOT-REFUSED': [2, 'This vault root is refused', 'drive, home, application-data, cloud roots and UNC paths are unsafe roots', 'Choose a dedicated local notes subdirectory.'],
+  'E-MARKER-FENCE-UNTERMINATED': [4, 'A Markdown fence is unclosed', 'markers may be hidden through EOF', 'Close the code fence and retry.'],
   'E-MARKER-DUPLICATE': [4, 'Multiple council markers found', 'the intended block is ambiguous', 'Keep one balanced council block.'],
   'E-MARKER-UNTERMINATED': [4, 'A council marker is unpaired', 'the block boundary is unknown', 'Repair the begin/end pair.'],
   'E-MARKER-VERSION-UNKNOWN': [4, 'The marker version is unknown', 'this build understands v=1 only', 'Use an installer supporting this marker version.'],

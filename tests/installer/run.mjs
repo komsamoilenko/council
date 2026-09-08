@@ -12,7 +12,7 @@ const inside = (p,r) => { const rel=path.relative(r,p); return rel!=='' && !rel.
 const envKeys = ['HOME','USERPROFILE','APPDATA','LOCALAPPDATA','TEMP','TMP','TMPDIR','XDG_CONFIG_HOME','XDG_DATA_HOME','XDG_STATE_HOME','XDG_CACHE_HOME','CODEX_HOME','CLAUDE_CONFIG_DIR'];
 function preflight() {
   const root=process.env.COUNCIL_TEST_ROOT;
-  if (!root || !inside(root,path.join(repo,'tests','tmp')) || fs.realpathSync(root)!==path.resolve(root) ||
+  if (!root || !inside(root,process.env.COUNCIL_TEST_TEMP_BASE || '') || fs.realpathSync(root)!==path.resolve(root) ||
       !inside(process.env.USERPROFILE || '',os.tmpdir()) || envKeys.some(key => !process.env[key] || !(path.resolve(process.env[key])===root || inside(path.resolve(process.env[key]),root))) ||
       process.env.PATH.split(path.delimiter)[0]!==fakebin || !['win32','darwin','linux'].includes(process.env.COUNCIL_PLATFORM)) throw new Error('REFUSED: installer child is not sandboxed');
   return root;
@@ -62,6 +62,10 @@ if (process.argv.includes('--child')) {
   };
   const invoke=async (argv,extra={})=>{let out='',err='';const code=await run(argv,{...ctx,...extra,stdout:t=>out+=t,stderr:t=>err+=t});return {code,out,err};};
   try {
+    if (caseName === 'cleanup-failure') {
+      fixture(root,'empty',ctx);
+      throw new Error('intentional cleanup failure');
+    }
     if(names.includes(caseName)) {
       const vault=fixture(root,caseName,ctx);
       const before=snapshot(root);
@@ -98,6 +102,15 @@ if (process.argv.includes('--child')) {
     } else if(caseName==='behavior') {
       const vault=fixture(root,'empty',ctx);
       await test('preflight has already run',async()=>assert.equal(preflight(),root));
+      await test('force-unlock CLI recovers unknown stale guard and lock', async()=>{
+        const file=ctx.dirs.lock, guard=file+'.council-tmp-claim';
+        put(file,JSON.stringify({pid:42,createdMs:1}));
+        put(path.join(guard,'stale.json'),JSON.stringify({pid:42,createdMs:1,token:'stale'}));
+        const lockOptions={now:()=>31*60*1000,platform:{systemBinaries:()=>({}),livenessOf:async()=> 'unknown'}};
+        const r=await invoke(['unlock','--force-unlock','--json'],{lockOptions});
+        assert.equal(r.code,0,r.out+r.err);assert.equal(fs.existsSync(file),false);assert.equal(fs.existsSync(guard),false);
+        assert.equal((await invoke(['unlock','--json'])).code,2);
+      });
       await test('parser closed verbs and flags',async()=>{
         for(const verb of ['apply','verify','update','uninstall','install-prereqs','login','migrate','rollback','set-key']){const r=await invoke([verb,'--json']);assert.equal(r.code,2);assert.ok(r.out.includes('not in this build'));assert.ok(usage.includes(verb));}
         for(const args of [['bogus'],['detect','--bad'],['plan','--vault'],['detect','--profile','../bad'],['new-task','../bad','--vault',vault]]) assert.equal((await invoke(args)).code,2);
@@ -218,22 +231,23 @@ if (process.argv.includes('--child')) {
     process.stdout.write(`PASS ${caseName}${caseName==='platform'?' '+env.COUNCIL_PLATFORM:''} (${count} checks)\n`);
   } catch(error) {process.stderr.write(`FAIL ${caseName}: ${error.stack}\n`);process.exitCode=1;}
 } else {
-  // Keep all test writes inside the authorized repository; children use their mkdtemp root as TEMP.
-  const tempBase=path.join(repo,'tests','tmp');fs.mkdirSync(tempBase,{recursive:true});
+  // Fixtures live in system temp; the parent owns cleanup even if a child fails.
+  const tempBase=fs.realpathSync(os.tmpdir());
   const {names}=await import('./fixtures.mjs');let passed=0,failed=0;
   const invalid=spawnSync(process.execPath,[self,'--child','empty'],{env:{...process.env,COUNCIL_TEST_ROOT:''},encoding:'utf8',windowsHide:true});
   if(invalid.status===2 && invalid.stderr.includes('REFUSED: installer child is not sandboxed')){passed++;process.stdout.write('PASS sandbox pre-flight refusal\n');}else{failed++;process.stdout.write('FAIL sandbox pre-flight refusal\n');}
-  const cases=process.argv.includes('--report')?[['obsidian-like','win32']]:[...names.map(n=>[n,'win32']),['behavior','win32'],['duplicate-caps','win32'],['platform','linux'],['platform','darwin']];
+  const cases=process.argv.includes('--exercise-failure-cleanup')?[['cleanup-failure','win32']]:process.argv.includes('--report')?[['obsidian-like','win32']]:[...names.map(n=>[n,'win32']),['behavior','win32'],['duplicate-caps','win32'],['platform','linux'],['platform','darwin']];
   for(const [name,platform] of cases) {
     const root=fs.mkdtempSync(path.join(tempBase,'installer-'));
-    const env={...process.env,COUNCIL_TEST_ROOT:root,COUNCIL_PLATFORM:platform,PATH:fakebin,OneDrive:'',OneDriveConsumer:'',OneDriveCommercial:'',COUNCIL_GEMINI_API_KEY:''};
+    try {
+    const env={...process.env,COUNCIL_TEST_TEMP_BASE:tempBase,COUNCIL_TEST_ROOT:root,COUNCIL_PLATFORM:platform,PATH:fakebin,OneDrive:'',OneDriveConsumer:'',OneDriveCommercial:'',COUNCIL_GEMINI_API_KEY:''};
     if(process.argv.includes('--report'))env.COUNCIL_PRINT_REPORT='1';
     for(const key of envKeys)env[key]=['TEMP','TMP','TMPDIR'].includes(key)?root:path.join(root,key.toLowerCase());
     for(const key of envKeys)fs.mkdirSync(env[key],{recursive:true});
     // Remove inherited differently-cased PATH entries on Windows.
     for(const key of Object.keys(env))if(key.toUpperCase()==='PATH'&&key!=='PATH')delete env[key];
-    try {const r=spawnSync(process.execPath,[self,'--child',name],{env,encoding:'utf8',windowsHide:true,timeout:180000,maxBuffer:4*1024**2});process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');if(r.status===0)passed++;else failed++;}
-    finally {if(!inside(root,tempBase))throw new Error('unsafe cleanup');fs.rmSync(root,{recursive:true,force:true});}
+    const r=spawnSync(process.execPath,[self,'--child',name],{env,encoding:'utf8',windowsHide:true,timeout:180000,maxBuffer:4*1024**2});process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');if(r.status===0)passed++;else failed++;}
+    finally {if(!inside(root,tempBase))throw new Error('unsafe cleanup');fs.rmSync(root,{recursive:true,force:true});if(fs.existsSync(root))throw new Error('sandbox cleanup failed');if(name==='cleanup-failure')process.stdout.write('PASS failed child sandbox removed\n');}
   }
   process.stdout.write(`installer suite: ${passed} passed, ${failed} failed\n`);process.exitCode=failed?1:0;
 }

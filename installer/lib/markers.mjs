@@ -48,11 +48,17 @@ export function scanMarkers(input, { style = 'markdown', ignoreLines = new Set()
       open = null;
     } else if (!open) outside += line.text + '\n';
   }
+  // An unclosed example cannot safely hide markers through EOF. Refuse the file.
+  if (fence) return { ...info, ...refusal('E_MARKER_FENCE_UNTERMINATED') };
   if (open) return { ...info, ...refusal('E_MARKER_UNTERMINATED') };
   return { ...info, ok: true, block, contractPresent: /## Council|council_start/.test(outside) };
 }
 
 export function canonicalBlock(body, { style = 'markdown', eol = '\n' } = {}) {
+  // This boundary owns unwrapping readable, already-marked templates (including
+  // their outside ownership comment). Callers may pass the real template whole.
+  const scan = scanMarkers(Buffer.from(body), { style });
+  if (scan.ok && scan.block) body = scan.block.body;
   const normalized = Buffer.from(body).toString('utf8').replace(/\r\n/g, '\n').replace(/\n*$/, '');
   const begin = style === 'hash' ? '# council:begin v=1' : '<!-- council:begin v=1 -->';
   const end = style === 'hash' ? '# council:end' : '<!-- council:end -->';
@@ -66,6 +72,9 @@ export function mergeMarkers(input, body, options = {}) {
   if (strategy === 'none') return { ok: true, changed: false, action: 'none', reason: 'strategy_none', bytes: before };
   const proposal = canonicalBlock(body, { ...options, eol: scan.eol });
   if (!scan.ok) return { ...scan, proposal };
+  const proposed = scanMarkers(proposal, { ...options, ignoreLines: new Set() });
+  if (!proposed.ok) return { ...proposed, proposal };
+  if (!proposed.block) return { ...refusal('E_MARKER_UNTERMINATED'), proposal };
   if (strategy === 'none' || (!scan.block && scan.contractPresent && !options.forceBlock))
     return { ok: true, changed: false, action: 'none', reason: scan.contractPresent ? 'contract_already_present' : 'strategy_none', bytes: before };
   if (strategy === 'sidecar') return { ok: true, action: 'sidecar', proposal };
@@ -91,7 +100,7 @@ export function mergeMarkers(input, body, options = {}) {
   const bytes = Buffer.concat([before.subarray(0, oldRange.start), replacement, before.subarray(oldRange.end)]);
   return { ok: true, action: 'block', bytes, oldRange, newRange: { start: oldRange.start, end: oldRange.start + replacement.length },
     changed: !before.equals(bytes), upgraded: !!scan.block?.upgraded, adopted: !!scan.block && !options.recordedHash,
-    blockHash: hashBody(scanMarkers(replacement, { ...options, ignoreLines: new Set() }).block.body) };
+    blockHash: hashBody(proposed.block.body) };
 }
 
 export async function mergeMarkerFile(file, body, options = {}) {
@@ -100,9 +109,11 @@ export async function mergeMarkerFile(file, body, options = {}) {
   try { before = fs.readFileSync(file); } catch (e) { if (e.code !== 'ENOENT') throw e; before = Buffer.alloc(0); }
   if (path.basename(file) === '.gitignore') {
     const scan = scanMarkers(before, { style: 'hash' });
-    const outside = scan.block ? Buffer.concat([before.subarray(0, scan.block.start), before.subarray(scan.block.end)]) : before;
-    const existing = new Set(linesOf(outside).lines.map(l => l.text));
-    body = String(body).split(/\r?\n/).filter(line => !existing.has(line)).join('\n');
+    if (scan.ok) {
+      const outside = scan.block ? Buffer.concat([before.subarray(0, scan.block.start), before.subarray(scan.block.end)]) : before;
+      const existing = new Set(linesOf(outside).lines.map(l => l.text));
+      body = String(body).split(/\r?\n/).filter(line => !existing.has(line)).join('\n');
+    }
     options = { ...options, style: 'hash' };
   }
   const result = mergeMarkers(before, body, options);
