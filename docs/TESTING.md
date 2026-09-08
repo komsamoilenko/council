@@ -1,11 +1,21 @@
 # Testing
 
 Run `node tests/run.mjs` for the local release gate: the 27 ported Tier-0
-tests, installer unit tests, then installer cases. All three suites run even
+tests, installer unit tests, installer cases, then trust tests. All four suites run even
 if an earlier suite fails. A failed suite makes the gate exit nonzero.
 Hosted CI must use the pure unit entry point, `node tests/installer/unit/run.mjs`,
 and the static checks described in specification §16.6; it must not run the
 local whole gate.
+
+`node tests/trust/run.mjs` executes T-40 through T-50 and T-00 without vendor
+calls. Fixtures are isolated installed trees under `mkdtemp` in the system temp
+directory and are removed after each test. Process creation and network entry
+points are intercepted and counted; T-44 and T-45 assert zero spawns.
+T-46 visibly skips with `requires uninstall (task 11)`. The T-50 apply/verify
+report assertion also visibly skips until those verbs exist; its ACL recovery
+assertions run now. Failures remain failures when a source guard does not meet
+the specification. `node tests/trust/run.mjs --lint-only` runs T-00 for hosted
+CI, without running the local runtime or installer suites.
 
 `node tests/tier0/smoke.mjs` uses `src/` directly and generates its own
 profile, machine file, accounts, source integrity manifest, vault, and state
