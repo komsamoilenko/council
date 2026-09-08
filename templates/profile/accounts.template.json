@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "note": "Declared, never detected. The server never reads a credential; these labels only say whose quota a leg spends (SPEC S10).",
+  "accounts": {
+    "claude": {
+      "vendor": "anthropic",
+      "label": "anthropic:default",
+      "surface": "cli"
+    },
+    "codex": {
+      "vendor": "openai",
+      "label": "openai:default",
+      "surface": "cli"
+    },
+    "gemini": {
+      "vendor": "google",
+      "label": "google:default",
+      "surface": "api"
+    },
+    "echo": {
+      "vendor": "local",
+      "label": "local:echo",
+      "surface": "none"
+    }
+  }
+}

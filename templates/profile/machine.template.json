@@ -1,0 +1,28 @@
+{
+  "schema": 2,
+  "written_by": "council-setup 0.1.0",
+  "written_at": "{{CREATED_AT}}",
+  "platform": "{{PLATFORM}}",
+  "binaries": {
+    "node": "{{NODE}}",
+    "claude": "{{CLAUDE}}",
+    "codex_js": "{{CODEX_JS}}",
+    "rg": "{{RG}}",
+    "gemini_api_js": "%COUNCIL_APP%/backends/gemini-api-run.js"
+  },
+  "npm_root_g": "{{NPM_ROOT_G}}",
+  "versions_at_install": {},
+  "notice_ack": {
+    "notice_sha256": "{{NOTICE_SHA256}}",
+    "accepted_at": "{{CREATED_AT}}"
+  },
+  "shared": {
+    "app_versions": [
+      "0.1.0"
+    ],
+    "skill": "{{SKILL_PATH}}",
+    "profiles": [
+      "{{PROFILE}}"
+    ]
+  }
+}

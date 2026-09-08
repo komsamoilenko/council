@@ -1,3 +1,4 @@
+<!-- Owns readme documentation; specification §§2–6,14. -->
 # council
 
 One MCP server that lets the AI assistant you are already talking to consult a **different vendor's** assistant, under your own subscriptions, and record what it cost.

@@ -1,3 +1,4 @@
+# Owns source-tree exclusions; specification §2.
 node_modules/
 *.log
 .DS_Store
@@ -8,3 +9,6 @@ jobs/
 ledger/
 secrets/
 *.bak-*
+
+# Validation fixtures belong in the system temp directory.
+.port-fixture/

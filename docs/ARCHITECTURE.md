@@ -1,3 +1,4 @@
+<!-- Owns architecture documentation; specification §§2–6,14. -->
 # Architecture
 
 The parts that are not obvious, and the decisions that look wrong until you know what

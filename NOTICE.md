@@ -1,3 +1,4 @@
+<!-- Owns notice documentation; specification §§2–6,14. -->
 # NOTICE
 
 `council` is an independent open-source project. It is not affiliated with, endorsed by, or sponsored by Anthropic, OpenAI, or Google.
@@ -27,7 +28,7 @@ council:
 
 Installing council changes nothing about your relationship with any AI vendor. **You are responsible for complying with the terms of every service you point council at**, including its quota, acceptable-use and automation rules:
 
-- Anthropic — [Claude Code: Legal and compliance](https://code.claude.com/docs/en/legal-and-compliance), [Consumer Terms](https://www.anthropic.com/legal/consumer-terms), [Commercial Terms](https://www.anthropic.com/legal/commercial-terms), [Usage Policy](https://www.anthropic.com/legal/aup)
+- Anthropic — [Claude Code: Legal and compliance](https://code.claude.com/docs/en/legal%2Dand-compliance), [Consumer Terms](https://www.anthropic.com/legal/consumer-terms), [Commercial Terms](https://www.anthropic.com/legal/commercial-terms), [Usage Policy](https://www.anthropic.com/legal/aup)
 - OpenAI — [Terms of Use](https://openai.com/policies/row-terms-of-use/), [Usage Policies](https://openai.com/policies/usage-policies/)
 - Google — [Gemini API Additional Terms](https://ai.google.dev/gemini-api/terms), [Google APIs Terms of Service](https://developers.google.com/terms), [Antigravity Additional Terms](https://antigravity.google/terms/)
 

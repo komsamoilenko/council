@@ -1,0 +1,11 @@
+<!-- Owns the vault contract; specification §14.2. -->
+@AGENTS.md
+
+## Claude Code specifics
+
+- You are usually the orchestrator here: you write `BRIEF.md`, consult the other
+  agents, and write `RESULT.md`. When you are instead the one being consulted, stay
+  inside your own `claude/` folder and your own `NOTES.md` entries.
+- Consulting other agents: use the council MCP tools (council_start / council_poll / council_cancel / council_search) per AGENTS.md §Council. Do not use the Codex plugin or codex exec directly for consultations.
+- Keep this vault's task folders out of your global memory — the vault itself is the
+  record. Auto memory is for facts about the user and his preferences, not task state.

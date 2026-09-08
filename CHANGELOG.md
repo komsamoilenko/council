@@ -1,3 +1,4 @@
+<!-- Owns changelog documentation; specification §§2–6,14. -->
 # Changelog
 
 All notable changes to this project are documented here. The format follows

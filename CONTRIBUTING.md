@@ -1,3 +1,4 @@
+<!-- Owns contributing documentation; specification §§2–6,14. -->
 # Contributing
 
 The project is in its scaffolding phase; the port from the working private version lands
@@ -19,7 +20,7 @@ behind it; if you want to change one, bring the counter-measurement.
 4. **The server deletes nothing** except its own expired lock files.
 5. **No vendor binary, no vendor code, no vendor credential** in this repository, ever.
    `tools/scan-personal.mjs` fails the build on any personal path, name or account label
-   in the release tree, with no exemptions.
+   in the release tree, except required author attribution on the root LICENSE copyright line.
 6. **A poll answers in under 45 seconds.** Every host abandons a tool call at 60.
 7. **The debate stays at two rounds** and keeps "converged but unverified" as a named
    outcome. See the papers cited in `docs/ARCHITECTURE.md`.
@@ -39,3 +40,8 @@ The zero-quota suite must be green before any change is proposed: it drives a re
 over a real stdio pipe with a fake backend, spends nothing, and takes about seven minutes.
 Tests must never write to the real ledger — there is an environment variable for that, and
 it is enforced.
+
+Create validation fixtures with `fs.mkdtempSync(path.join(os.tmpdir(), 'council-test-'))`,
+outside the repository, and clean them up after validation. Never use `.port-fixture/`.
+Run the scanner regression checks with `node tools/scan-personal.test.mjs`; these use
+an in-memory filesystem and create no fixtures or ACL changes.
