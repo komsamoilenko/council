@@ -85,6 +85,8 @@ export function assertOutside(before, after, oldRange, newRange) {
 
 // Both dry and wet callers consume the same splice and the same assertion.
 export async function writeSplice(file, before, result, { dryRun = true, backup, writer = safewrite } = {}) {
+  if (!dryRun && /^(?:\.claude\.json|config\.toml|claude_desktop_config\.json)$/i.test(path.basename(file)))
+    throw new Error('host_requires_surgical_writer');
   assertOutside(before, result.bytes, result.oldRange, result.newRange);
   if (dryRun || before.equals(result.bytes)) return result;
   if (fs.existsSync(file) && (!backup || !fs.readFileSync(backup).equals(before))) throw new Error('backup_required');
@@ -96,6 +98,30 @@ export async function writeSplice(file, before, result, { dryRun = true, backup,
   try { assertOutside(before, fs.readFileSync(file), result.oldRange, result.newRange); }
   catch (error) {
     await safewrite(file, backup ? fs.readFileSync(backup) : before);
+    throw error;
+  }
+  return result;
+}
+
+// Host recovery never consumes backup bytes. recover receives the live bytes and
+// must return a splice restoring only the recorded entry/table. Re-check those
+// bytes immediately before recovery so a concurrent host change is never reverted.
+export async function writeHostSplice(file, before, result, { dryRun = true, backup, writer = safewrite, recover } = {}) {
+  assertOutside(before, result.bytes, result.oldRange, result.newRange);
+  if (dryRun || before.equals(result.bytes)) return result;
+  if (typeof recover !== 'function') throw new Error('host_recovery_required');
+  if (fs.existsSync(file) && (!backup || !fs.readFileSync(backup).equals(before))) throw new Error('backup_required');
+  const read = () => { try { return fs.readFileSync(file); } catch (error) { if (error.code !== 'ENOENT') throw error; return Buffer.alloc(0); } };
+  if (!read().equals(before)) throw Object.assign(new Error('plan_stale'), { exitCode: 3 });
+  await writer(file, result.bytes);
+  try { assertOutside(before, read(), result.oldRange, result.newRange); }
+  catch (error) {
+    const current = read(), restore = recover(current);
+    if (!restore?.ok) throw Object.assign(error, { recovery: 'refused', recoveryCode: restore?.code });
+    assertOutside(current, restore.bytes, restore.oldRange, restore.newRange);
+    if (!read().equals(current)) throw Object.assign(error, { recovery: 'concurrent_change' });
+    await safewrite(file, restore.bytes);
+    assertOutside(current, read(), restore.oldRange, restore.newRange);
     throw error;
   }
   return result;

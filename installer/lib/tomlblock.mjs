@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import platform from '../../src/platform/index.js';
 import { linesOf, scanMarkers, mergeMarkers, canonicalBlock, refusal } from './markers.mjs';
-import { safewrite, writeSplice, rejectReparse } from './safewrite.mjs';
+import { safewrite, writeHostSplice, rejectReparse } from './safewrite.mjs';
 
 function tableName(text) {
   const match = /^\s*(\[\[?)(.*?)\]\]?\s*(?:#.*)?$/.exec(text);
@@ -100,5 +100,24 @@ export async function spliceTomlFile(file, body, options = {}) {
     }
     return { ...result, sibling };
   }
-  return writeSplice(file, before, result, options);
+  return writeHostSplice(file, before, result, { ...options, recover: current => restoreToml(current, before, result, options) });
+}
+
+export function restoreToml(current, before, written, options = {}) {
+  const tokens = councilSpan(current, options);
+  if (!tokens.ok) return tokens;
+  const marked = scanMarkers(current, { style: 'hash', ignoreLines: tokens.ignoreLines });
+  if (!marked.ok || !marked.block) return refusal('E_TOML_RECOVERY_CONFLICT');
+  if (tokens.headers.some(h => h.start >= marked.block.start && h.start < marked.block.end &&
+      !(h.names[0] === 'mcp_servers' && h.names[1] === (options.name || 'council')))) return refusal('E_TOML_FOREIGN_TABLE');
+  const expectedTokens = tokenizeToml(written.bytes);
+  const expected = scanMarkers(written.bytes, { style: 'hash', ignoreLines: expectedTokens.ignoreLines }).block;
+  if (!current.subarray(marked.block.start, marked.block.end).equals(written.bytes.subarray(expected.start, expected.end)))
+    return refusal('E_TOML_RECOVERY_CONFLICT');
+  let start = marked.block.start;
+  const separator = written.bytes.subarray(written.newRange.start, expected.start);
+  if (separator.length && start >= separator.length && current.subarray(start - separator.length, start).equals(separator)) start -= separator.length;
+  const end = marked.block.end, replacement = before.subarray(written.oldRange.start, written.oldRange.end);
+  return { ok: true, bytes: Buffer.concat([current.subarray(0, start), replacement, current.subarray(end)]),
+    oldRange: { start, end }, newRange: { start, end: start + replacement.length } };
 }

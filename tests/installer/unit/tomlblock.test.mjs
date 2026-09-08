@@ -56,11 +56,13 @@ export default async function(test) {
     const outside=Buffer.concat([input,Buffer.from('[mcp_servers.council.extra]\nx=1\n')]);
     assert.equal(spliceToml(outside,body,{allowRewrite:true}).code,'E_TOML_OUTSIDE_BLOCK');
   });
-  await test('post-write corruption restores whole preimage', async root => {
+  await test('post-write failure restores only council and preserves live surrounding bytes', async root => {
     const file=path.join(root,'config.toml'), backup=path.join(root,'preimage'), before=Buffer.from('[first]\nx=1\n'+body+'[last]\nx=2\n');
     await safewrite(file,before); await safewrite(backup,before);
     await assert.rejects(spliceTomlFile(file,body+'extra=1\n',{platform:host,adoptExisting:true,dryRun:false,backup,
       writer:async (p,b) => { const corrupt=Buffer.from(b); corrupt[corrupt.length-2]^=1; await safewrite(p,corrupt); }}),{code:'E_OUTSIDE_RANGE'});
-    assert.deepEqual(fs.readFileSync(file),before);
+    const live = Buffer.from(before); live[live.length-2]^=1;
+    assert.deepEqual(fs.readFileSync(file),live);
+    assert.deepEqual(fs.readFileSync(backup),before);
   });
 }
