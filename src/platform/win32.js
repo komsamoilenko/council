@@ -317,6 +317,7 @@ function under(p, root) { if (!p || !root) return false; const a = caseFold(path
 function isAbsoluteNative(p) { return typeof p === 'string' && path.win32.isAbsolute(p) && !/^[\\/](?![\\/])/.test(p); }
 function childEnvAllow() { return ['SystemRoot','windir','SystemDrive','COMSPEC','PATHEXT','NUMBER_OF_PROCESSORS','PROCESSOR_ARCHITECTURE','PROCESSOR_IDENTIFIER','OS','TEMP','TMP','USERPROFILE','HOMEDRIVE','HOMEPATH','USERNAME','COMPUTERNAME','APPDATA','LOCALAPPDATA','PROGRAMDATA','ALLUSERSPROFILE','PUBLIC','ProgramFiles','ProgramFiles(x86)','ProgramW6432','CommonProgramFiles']; }
 function childPath(nodeDir) { const sys = tokens().SYSTEMROOT; return [sys && path.join(sys,'System32'),sys,sys && path.join(sys,'System32','Wbem'),sys && path.join(sys,'System32','WindowsPowerShell','v1.0'),nodeDir].filter(Boolean).join(path.delimiter); }
+// Deliberate split: profile paths are installer-controlled data; ps() and dpapi() bind to known-good System32 binaries.
 function systemBinaries() { const sys = tokens().SYSTEMROOT; if (!sys || !isAbsoluteNative(sys)) return {}; return { powershell: path.join(sys,'System32','WindowsPowerShell','v1.0','powershell.exe'), taskkill: path.join(sys,'System32','taskkill.exe'), tasklist: path.join(sys,'System32','tasklist.exe') }; }
 function npmRootInfo(machine = {}) {
   const t = tokens(), candidate = machine.npm_root_g;
@@ -338,23 +339,64 @@ function psQuote(s) { return "'" + String(s).replace(/'/g,"''") + "'"; }
 async function ps(command) { const file = systemBinaries().powershell; if (!file) throw new Error('system helper unavailable'); const r = await run(file, ['-NoProfile','-NonInteractive','-Command',"$ErrorActionPreference='Stop'; "+command], 15000); if (!r.ok) throw new Error('system helper failed'); return r.stdout.trim(); }
 async function fileAttributes(p) { const bits = Number(await ps('[int64](Get-Item -LiteralPath ' + psQuote(p) + ' -Force -ErrorAction Stop).Attributes')); return { bits, offline: !!(bits & 0x1000), recallOnDataAccess: !!(bits & 0x400000), pinned: !!(bits & 0x80000), reparsePoint: !!(bits & 0x400) }; }
 async function isCloudSynced(p) { const evidence = []; for (const name of ['OneDrive','OneDriveConsumer','OneDriveCommercial','Dropbox']) if (process.env[name] && under(p,process.env[name])) evidence.push(name + ' root'); if (/(?:^|[\\/])(OneDrive|Dropbox|Google Drive)(?:[\\/]|$)/i.test(p)) evidence.push('path-name heuristic'); let attributes = null; try { attributes = await fileAttributes(p); if (attributes.offline || attributes.recallOnDataAccess) evidence.push('cloud recall attributes'); } catch {} return { synced: evidence.length > 0, evidence, attributes, unknown: !attributes }; }
-async function restrictToOwner(dir) {
-  // Snapshot the security descriptor first. Restore it on any tightening/post-check failure.
-  const saved = await ps('(Get-Acl -LiteralPath ' + psQuote(dir) + ').GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)');
-  const sid = await ps('[Security.Principal.WindowsIdentity]::GetCurrent().User.Value');
-  if (!/^S-1-[0-9-]+$/.test(sid)) throw new Error('owner identity unavailable');
-  const binary = path.join(tokens().SYSTEMROOT,'System32','icacls.exe');
+function aclPostCheck(dir) {
+  fs.readdirSync(dir);
+  const probeFile = path.join(dir, '.acl-' + require('crypto').randomBytes(6).toString('hex'));
+  let created = false;
   try {
-    let r = await run(binary,[dir,'/inheritance:r','/grant:r','*' + sid + ':(OI)(CI)F'],15000); if (!r.ok) throw new Error('ACL owner grant failed');
-    // Remove all remaining explicit non-owner rules; the saved descriptor permits rollback.
-    await ps('$p=' + psQuote(dir) + '; $a=New-Object Security.AccessControl.DirectorySecurity; $a.SetSecurityDescriptorSddlForm((Get-Acl -LiteralPath $p).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access),[Security.AccessControl.AccessControlSections]::Access); foreach($r in @($a.Access)){if($r.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -ne ' + psQuote(sid) + '){[void]$a.RemoveAccessRuleSpecific($r)}}; [IO.Directory]::SetAccessControl($p,$a)');
-    fs.readdirSync(dir); const probeFile = path.join(dir,'.acl-' + require('crypto').randomBytes(6).toString('hex')); fs.writeFileSync(probeFile,'ok',{flag:'wx'}); if (fs.readFileSync(probeFile,'utf8') !== 'ok') throw new Error('ACL post-check failed'); fs.unlinkSync(probeFile);
-    return { ok: true };
-  } catch (e) {
-    await ps('$a=New-Object Security.AccessControl.DirectorySecurity; $a.SetSecurityDescriptorSddlForm(' + psQuote(saved) + ',[Security.AccessControl.AccessControlSections]::Access); [IO.Directory]::SetAccessControl(' + psQuote(dir) + ',$a)');
-    fs.readdirSync(dir); throw e;
+    fs.writeFileSync(probeFile, 'ok', { flag: 'wx' });
+    created = true;
+    if (fs.readFileSync(probeFile, 'utf8') !== 'ok') throw new Error('ACL post-check failed');
+  } finally {
+    if (created) fs.unlinkSync(probeFile);
   }
 }
+async function restrictToOwner(dir) {
+  let saved, binary, failure;
+  const remember = e => {
+    if (!failure) failure = e;
+    else { let tail = failure; while (tail.cause) tail = tail.cause; tail.cause = e; }
+  };
+  try {
+    // Snapshot before mutation; even setup failures still run the post-check below.
+    saved = await ps('(Get-Acl -LiteralPath ' + psQuote(dir) + ').GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)');
+    const sid = await ps('[Security.Principal.WindowsIdentity]::GetCurrent().User.Value');
+    if (!/^S-1-[0-9-]+$/.test(sid)) throw new Error('owner identity unavailable');
+    binary = path.join(tokens().SYSTEMROOT, 'System32', 'icacls.exe');
+    const r = await run(binary, [dir, '/inheritance:r', '/grant:r', '*' + sid + ':(OI)(CI)F'], 15000);
+    if (!r.ok) throw new Error('ACL owner grant failed');
+    // Set-Acl needs SeSecurityPrivilege; use the .NET static or, in PowerShell 7, the extension method.
+    // RemoveAccessRuleSpecific returns void on .NET: check any false result AND prove the rule count decreased.
+    await ps('$p=' + psQuote(dir) + '; $a=Get-Acl -LiteralPath $p; foreach($r in @($a.Access)){if($r.IsInherited){continue}; try{$id=$r.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value}catch [Security.Principal.IdentityNotMappedException]{continue}; if($id -in @(' + psQuote(sid) + ",'S-1-5-18','S-1-5-32-544')){continue}; $before=$a.Access.Count; $removed=$a.RemoveAccessRuleSpecific($r); if($removed -eq $false -or $a.Access.Count -ge $before){throw 'ACL rule removal failed'}}; if([IO.Directory].GetMethod('SetAccessControl')){[IO.Directory]::SetAccessControl($p,$a)}else{[System.IO.FileSystemAclExtensions]::SetAccessControl([IO.DirectoryInfo]::new($p),$a)}");
+  } catch (e) { remember(e); }
+  // Always prove listing and probe read/write, including after a failed owner grant.
+  try { aclPostCheck(dir); } catch (e) { remember(e); }
+  if (!failure) return { ok: true };
+
+  let reverted = false;
+  // Reject missing/empty DACLs, including D:PAI. Parsing inside PowerShell validates the rest.
+  if (typeof saved === 'string' && /^D:(?:P|AI|AR)*\([^()]+\)(?:\([^()]+\))*$/.test(saved)) {
+    try {
+      // Set-Acl needs SeSecurityPrivilege; use the .NET static or, in PowerShell 7, the extension method.
+      await ps('$a=Get-Acl -LiteralPath ' + psQuote(dir) + '; $p=' + psQuote(dir) + '; $a.SetSecurityDescriptorSddlForm(' + psQuote(saved) + ",[Security.AccessControl.AccessControlSections]::Access); if([IO.Directory].GetMethod('SetAccessControl')){[IO.Directory]::SetAccessControl($p,$a)}else{[System.IO.FileSystemAclExtensions]::SetAccessControl([IO.DirectoryInfo]::new($p),$a)}");
+      aclPostCheck(dir);
+      reverted = true;
+    } catch (e) { remember(e); }
+  }
+  if (!reverted) {
+    for (const option of ['/reset', '/inheritance:e']) {
+      try {
+        binary = binary || path.join(tokens().SYSTEMROOT, 'System32', 'icacls.exe');
+        const r = await run(binary, [dir, option], 15000);
+        if (!r.ok) remember(new Error('ACL recovery failed: ' + option));
+      } catch (e) { remember(e); }
+      try { aclPostCheck(dir); reverted = true; break; } catch (e) { remember(e); }
+    }
+  }
+  // Preserve the original diagnosis and recovery causes without changing the result contract.
+  return Object.defineProperty({ ok: false, reason: 'backup_acl_not_restricted', reverted }, 'error', { value: failure });
+}
+
 function secretPath(name) { if (!name || !/^[a-z0-9][a-z0-9_-]{0,31}$/.test(name.profile || '')) throw new Error('bad_profile_name'); const root=name.runtimeRoot || path.join(appDirs().run,name.profile); if(!isAbsoluteNative(root) || !under(real(root),real(appDirs().stateAnchor)))throw new Error('secret location rejected'); return path.join(root,'secrets','gemini-api-key.dpapi'); }
 function dpapi(name, operation, input) {
   const file = name.binary || systemBinaries().powershell;

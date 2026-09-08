@@ -10,6 +10,7 @@
  * reaper_action / cancel_requested / job_finished ledger rows, and deletes nothing.
  */
 
+const path = require('path');
 const jobstore = require('./jobstore.js');
 const ledger = require('./ledger.js');
 const procwin = require('../platform');
@@ -162,7 +163,7 @@ function legRecordFor(ctx, view, plan, outcome, killReport) {
     last_label: pr.last_label == null ? null : pr.last_label,
     stderr_tail: stderrTail(view, legId),
     answer_chars: 0,
-    answer_path: 'legs\\' + legId + '\\answer.md',
+    answer_path: path.join('legs', legId, 'answer.md'),
     child_enumeration: null,
   };
 }

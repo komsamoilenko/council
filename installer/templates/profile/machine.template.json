@@ -4,6 +4,9 @@
   "written_at": "{{CREATED_AT}}",
   "platform": "{{PLATFORM}}",
   "binaries": {
+    "powershell": "{{POWERSHELL}}",
+    "tasklist": "{{TASKLIST}}",
+    "taskkill": "{{TASKKILL}}",
     "node": "{{NODE}}",
     "claude": "{{CLAUDE}}",
     "codex_js": "{{CODEX_JS}}",

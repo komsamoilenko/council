@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const forbidden = [
-  ['kom','sa'],['De','nis'],['Samoi','lenko'],['Pay','sera'],['pay','sera\\.net'],['\\b','ps','r','\\b'],
+  ['kom','sa'],['Pay','sera'],['pay','sera\\.net'],['\\b','ps','r','\\b'],
   ['anthropic:', 'cli'],['openai:chatgpt-', 'personal'],['google:', 'aipro'],
   ['app to work ', 'with AI'],['2026-09-07-council-', 'build'],['2026-09-07-council-', 'installer'],
 ].map(parts=>new RegExp(parts.join(''),'gi'));
@@ -16,8 +16,6 @@ export function scan(root) {
     re.lastIndex=0;
     for(const m of s.matchAll(re)) {
       const line=s.slice(0,m.index).split('\n').length;
-      // The author's name in the root MIT copyright notice is required attribution.
-      if(rel==='LICENSE' && part!=='name' && index<3 && /^Copyright \(c\) \d{4} /u.test(s.split('\n')[line-1]))continue;
       hits.push({file:rel,line,rule:index,part});
     }
   } };

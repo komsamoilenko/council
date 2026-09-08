@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // Owns version-independent main-module launch; specification §4.8.
 'use strict';
 const fs=require('fs'),path=require('path'),Module=require('module');

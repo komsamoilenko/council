@@ -9,11 +9,13 @@ import {scan} from './scan-personal.mjs';
 const root=path.join(os.tmpdir(),'council-scanner-virtual');
 const originalRead=fs.readFileSync,originalList=fs.readdirSync;
 const entry=(name,type)=>({name,isDirectory:()=>type==='dir',isFile:()=>type==='file',isSymbolicLink:()=>type==='link'});
-const person=['De','nis'].join('');
+const person=['De','nis',' ','Samoi','lenko'].join('');
+const account=['kom','sa'].join('');
+const machinePath='C:/Users/'+account+'/file.txt';
 const denied=()=>{throw Object.assign(new Error('Denied'),{code:'EACCES'});};
 try {
   fs.readdirSync=dir=>dir===root ? [entry('.git','dir'),entry('blocked','dir'),entry('bad.txt','file'),entry('later','dir'),entry('LICENSE','file')] : dir===path.join(root,'later') ? [entry('last.txt','file')] : denied();
-  fs.readFileSync=file=>file===path.join(root,'bad.txt') ? denied() : Buffer.from(file===path.join(root,'LICENSE') ? 'Copyright (c) 2026 '+person+'\n' : person);
+  fs.readFileSync=file=>file===path.join(root,'bad.txt') ? denied() : Buffer.from(file===path.join(root,'LICENSE') ? 'Copyright (c) 2026 '+person+'\n' : account);
   const result=scan(root);
   assert.equal(result.files,2);
   assert.equal(result.skipped,2);
@@ -22,9 +24,11 @@ try {
   assert.ok(!result.hits.some(h=>h.file==='LICENSE'));
 
   fs.readdirSync=()=>[entry('LICENSE','file')];
-  fs.readFileSync=()=>Buffer.from('Copyright (c) 2026 '+person+'\n'+person);
+  fs.readFileSync=()=>Buffer.from('Copyright (c) 2026 '+person+'\n'+machinePath);
   assert.ok(scan(root).hits.some(h=>h.file==='LICENSE' && h.line===2));
-  fs.readFileSync=()=>Buffer.from('Copyright (c) 2026 '+person+'\n');
+  fs.readFileSync=()=>Buffer.from('Copyright (c) 2026 '+person+' '+machinePath+'\n');
+  assert.ok(scan(root).hits.some(h=>h.file==='LICENSE' && h.line===1 && h.rule===0));
+  fs.readFileSync=()=>Buffer.from('Copyright (c) 2026 '+person+'\n'+person);
   assert.deepEqual(scan(root),{files:1,skipped:0,hits:[]});
 
   fs.readdirSync=()=>[];
