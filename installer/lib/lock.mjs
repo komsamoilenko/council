@@ -17,7 +17,7 @@ async function reclaimable(owner, file, options, prefix = 'lock') {
   let live = 'unknown';
   try { live = await host.livenessOf(ctx || { paths: { binaries: host.systemBinaries() } }, owner.pid); } catch {}
   if (live === 'alive') return refused(prefix + '_live', file, owner);
-  if (now() - owner.createdMs < STALE_MS) return refused(prefix + '_not_stale', file, owner);
+  if (live !== 'gone' && now() - owner.createdMs < STALE_MS) return refused(prefix + '_not_stale', file, owner);
   if (live !== 'gone' && !forceUnlock) return refused(prefix + '_liveness_unknown', file, owner, true);
   return null;
 }
@@ -96,7 +96,7 @@ export async function releaseLock(lock, options = {}) {
 }
 
 // Explicit A-03 escape; arbitration recovery is performed before acquisition.
-// Even force cannot override a live owner or the minimum age.
+// Even force cannot override a live owner or the minimum age for unknown liveness.
 export async function forceUnlock(etc, options = {}) {
   const lock = await acquireLock(etc, { ...options, forceUnlock: true });
   if (!lock.ok) return lock;

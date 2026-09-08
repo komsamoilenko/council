@@ -300,6 +300,22 @@ async function treeKill(ctx, pid) {
   return { ok: dead, exit: r.exit, stdout: r.stdout, stderr: r.stderr, verified_dead: dead };
 }
 
+// Single-process termination preserves detached runners during server restart tests.
+async function killPid(ctx, pid) {
+  const n = toPid(pid);
+  if (n === null) throw new Error('invalid pid');
+  const r = await run(ctx.paths.binaries.taskkill, ['/PID', String(n), '/F'], TASKKILL_TIMEOUT_MS);
+  return { ...r, verified_dead: await waitForDeath(ctx, n, DEATH_WAIT_MS) };
+}
+async function childrenOf(ctx, pid) {
+  const n = toPid(pid);
+  if (n === null) throw new Error('invalid pid');
+  const r = await run(ctx.paths.binaries.powershell, ['-NoProfile', '-NonInteractive', '-Command',
+    "Get-CimInstance Win32_Process -Filter 'ParentProcessId=" + n + "' | Select-Object -ExpandProperty ProcessId"], PS_TIMEOUT_MS);
+  if (!r.ok) throw new Error('children probe failed: ' + r.stderr);
+  return r.stdout.split(/\r?\n/).map(s => Number(s.trim())).filter(n => Number.isInteger(n) && n > 0);
+}
+
 // Owns Windows paths, ACLs and encrypted credential transport; specification §§3–4,6,8.
 function homeDir() { return process.env.USERPROFILE || os.homedir(); }
 function tokens() {
@@ -412,6 +428,7 @@ function secretGet(name) { return dpapi(name,'unprotect',fs.readFileSync(secretP
 function secretSet(name,value) { const p = secretPath(name); const blob = dpapi(name,'protect',value); fs.mkdirSync(path.dirname(p),{recursive:true}); fs.writeFileSync(p,blob,{mode:0o600}); }
 function secretDelete(name) { const p = secretPath(name); try { fs.unlinkSync(p); } catch(e) { if(e.code !== 'ENOENT') throw e; } }
 module.exports = {
+  killPid, childrenOf,
   id:'win32', implemented:{proc:true,secrets:true,fileAttributes:true}, notImplementedReason:null,
   appDirs, homeDir, tokens, caseFold, isAbsoluteNative, sameFile:(a,b) => caseFold(real(a)) === caseFold(real(b)), childEnvAllow, childPath, nullDevice:() => 'NUL', allowedRootsBase, systemBinaries,
   longLivedChildArgv:() => ({file:path.join(tokens().SYSTEMROOT,'System32','cmd.exe'),args:['/c','timeout','300','||','ping','-n','300','127.0.0.1','>','nul']}),

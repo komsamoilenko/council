@@ -83,8 +83,8 @@ export default async function(test) {
     const lock = await acquireLock(root), guard = lock.file + '.council-tmp-claim';
     fs.mkdirSync(guard);
     fs.writeFileSync(path.join(guard,'old.json'), JSON.stringify({pid:42,createdMs:1,token:'old'}));
-    for (const [live,now,reason] of [['alive',STALE_MS+2,'lock_arbitration_live'],['gone',2,'lock_arbitration_not_stale'],['unknown',STALE_MS+2,'lock_arbitration_' + 'liveness_unknown']]) {
-      const result = await acquireLock(root,{platform:host(live),now:()=>now,forceUnlock:live!=='unknown'});
+    for (const [live,now,reason] of [['alive',STALE_MS+2,'lock_arbitration_live'],['unknown',2,'lock_arbitration_not_stale'],['unknown',STALE_MS+2,'lock_arbitration_' + 'liveness_unknown']]) {
+      const result = await acquireLock(root,{platform:host(live),now:()=>now,forceUnlock:live==='alive' || now===2});
       assert.equal(result.reason,reason); assert.equal(result.path,guard);
     }
     assert.equal((await releaseLock(lock,{platform:host('gone'),now:()=>STALE_MS+2})).ok,true);

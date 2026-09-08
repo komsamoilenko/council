@@ -240,12 +240,12 @@ function resolveVaultPath(input, P, opts) {
   }
   if (!o.allowJobs && isUnder(real, P.jobsRoot)) return { ok: false, reason: 'path_outside_vault', detail: 'work\\jobs is not readable through this tool' };
   if (isUnder(real, P.ledgerDir)) return { ok: false, reason: 'path_outside_vault', detail: 'ledger is not readable through this tool' };
-  if (isUnder(real, P.councilDir)) return { ok: false, reason: 'path_outside_vault', detail: 'bin\\council is not readable through this tool' };
+  if (isUnder(real, path.join(P.vault, 'bin', 'council')) || isUnder(real, P.councilDir)) return { ok: false, reason: 'path_outside_vault', detail: 'bin\\council is not readable through this tool' };
   if (!o.allowAncestors) {
     const contains = [];
     if (!o.allowJobs && isUnder(P.jobsRoot, real)) contains.push('work\\jobs');
     if (isUnder(P.ledgerDir, real)) contains.push('ledger');
-    if (isUnder(P.councilDir, real)) contains.push('bin\\council');
+    if (isUnder(path.join(P.vault, 'bin', 'council'), real) || isUnder(P.councilDir, real)) contains.push('bin\\council');
     if (contains.length) {
       return {
         ok: false, reason: 'path_outside_vault',

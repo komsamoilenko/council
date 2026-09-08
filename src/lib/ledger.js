@@ -77,7 +77,16 @@ function clientLabel(info) {
  */
 function append(ctx, row) {
   const P = ctx && ctx.paths;
-  if ((ctx.mode && ctx.mode !== 'normal') || !P || !P.ledgerDir) return false;
+  if (!P || !P.ledgerDir) return false;
+  if (ctx.mode && ctx.mode !== 'normal') {
+    // Preserve refusal auditing when only binaries/runtime are invalid. Never write
+    // through an untrusted vault/layout, a broken app manifest, or secret-bearing config.
+    const safeRefusal = ctx.mode === 'doctor-only' && row.event === 'refused' &&
+      ctx.integrity?.ok === true && ctx.trust?.failures?.length > 0 &&
+      ctx.trust.failures.every(f => f.key === 'runtime_root' || f.key.startsWith('binaries.')) &&
+      require('./paths').isUnder(P.ledgerDir, P.vault);
+    if (!safeRefusal) return false;
+  }
   let line = null;
   try {
     try { fs.mkdirSync(P.ledgerDir, { recursive: true }); } catch { /* exists, or unwritable */ }

@@ -12,7 +12,11 @@ function resolve(explicit) {
   result.path = explicit || fromEnv.path || path.join(profileDir,'config.json');
   let raw, machine;
   try { raw = read(result.path); } catch { fail('profile','profile_not_installed: council-setup apply --profile ' + id); return result; }
-  try { machine = read(path.join(dirs.etc,'machine.json')); } catch { if (explicit || fromEnv.path) machine = {schema:2,binaries:raw.binaries || {}}; else { fail('machine','machine_not_installed'); return result; } }
+  // An honoured test override supplies its complete flat binary fixture (§16.1).
+  // Real hosts still load binaries exclusively from the installed machine file.
+  if (explicit || fromEnv.path) machine = {schema:2,binaries:raw?.binaries || {}};
+  else try { machine = read(path.join(dirs.etc,'machine.json')); }
+  catch { fail('machine','machine_not_installed'); return result; }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !machine || typeof machine !== 'object' || Array.isArray(machine)) { fail('config','invalid_config_shape'); return result; }
   for (const [name,doc] of [['profile',raw],['machine',machine]]) for (const key of redact.findSecrets(doc)) fail(name + '.' + key,'secret_in_config');
   if (raw.schema !== 2 || machine.schema !== 2) fail('schema','unsupported_config_schema');

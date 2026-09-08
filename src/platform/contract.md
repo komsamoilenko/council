@@ -19,6 +19,7 @@ platform identifier. Methods do not resolve system helpers through PATH.
 | verifyRunner(ctx,pid,{jobId}) | Identity-checked runner observation |
 | verifyLeaf(ctx,pid,{expectedImage,runnerPid,createdAtMs}) | Identity-checked leaf observation |
 | waitForDeath(ctx,pid,ms), treeKill(ctx,pid) | Bounded death verification and tree termination |
+| killPid(ctx,pid), childrenOf(ctx,pid) | Single-process forced termination with death verification; direct child IDs, rejecting failed probes |
 | fileAttributes(p), isCloudSynced(p), restrictToOwner(dir) | File metadata, evidence-only sync detection, owner restriction with rollback |
 | secretGet(name), secretSet(name,value), secretDelete(name) | OS store transport, using base64 encoding across the module boundary |
 | rgVendorDir(codexJs), expectedImage(name), agyBinaryRoot() | Vendor executable layout and native process names |

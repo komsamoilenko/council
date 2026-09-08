@@ -4,5 +4,5 @@
   "private": true,
   "license": "MIT",
   "type": "commonjs",
-  "scripts": { "scan": "node tools/scan-personal.mjs" }
+  "scripts": { "scan": "node tools/scan-personal.mjs", "test": "node tests/run.mjs", "test:tier0": "node tests/tier0/smoke.mjs", "test:installer": "node tests/installer/run.mjs" }
 }
