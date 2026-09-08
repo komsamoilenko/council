@@ -12,3 +12,4 @@ secrets/
 
 # Validation fixtures belong in the system temp directory.
 .port-fixture/
+tests/**/tmp/

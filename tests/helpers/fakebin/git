@@ -1,0 +1,3 @@
+#!/usr/bin/env node
+// Fixture sentinel. The injected probe handles this path; never execute a vendor binary.
+throw new Error('The sandbox must inject its probe.');
