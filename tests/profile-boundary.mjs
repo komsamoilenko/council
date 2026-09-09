@@ -5,6 +5,7 @@ import path from 'node:path';
 import {fixture,json} from './trust/fixture.mjs';
 
 const f=fixture();
+let success=false;
 try {
   const profile=f.load('lib/profile.js'), baseline=profile.resolve().config.binaries;
   const fakeVault=path.join(f.root,'claimed-vault');
@@ -44,4 +45,5 @@ try {
   assert.equal(f.spawns,0);
   assert.equal(f.networks,0);
   console.log('PASS profile boundary: forged vault, nested path, ignored host override, junction, second profile, bootstrap, unreadable boundary; zero external I/O');
-} finally { f.close(); }
+  success=true;
+} finally { f.close(success); }
