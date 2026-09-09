@@ -399,6 +399,7 @@ class Job {
       started_at: new Date(this.startedMs).toISOString(),
       heartbeat_at: new Date(now).toISOString(),
       heartbeat_ms: now,
+      cancel_timing: this.cancelTiming || [],
       deadline_at: this.request.deadline_at,
       deadline_ms: this.deadlineMs,
       legs,
@@ -440,11 +441,16 @@ class Job {
     this.writeProgress(true);
 
     const killReport = [];
+    const cancelTiming = this.cancelTiming = [];
+    const killCtx = { ...this.ctx, cancelTiming, saveCancelTiming: () => {
+      const state = jobstore.readJSON(this.files.state);
+      if (state) jobstore.atomicWriteJSON(this.files.state, { ...state, cancel_timing: cancelTiming });
+    } };
     if (forced) {
       for (const leg of this.legs.values()) {
         if (leg.state !== 'running' || !leg.pid) continue;
         leg.state = forced;
-        const v = await procwin.verifyLeaf(this.ctx, leg.pid, {
+        const v = await procwin.verifyLeaf(killCtx, leg.pid, {
           expectedImage: leg.meta.expected_image, runnerPid: process.pid,
           createdAtMs: this.request.created_ms,
         }).catch((e) => ({ ok: false, reason: 'verify_failed: ' + e.message }));
@@ -461,12 +467,14 @@ class Job {
           this.rlog(leg.leg_id + ' kill refused: ' + v.reason);
           continue;
         }
-        const k = await procwin.treeKill(this.ctx, leg.pid).catch((e) => ({ ok: false, error: e.message }));
+        const k = await procwin.treeKill(killCtx, leg.pid).catch((e) => ({ ok: false, error: e.message }));
         killReport.push({ leg: leg.leg_id, pid: leg.pid, tree_kill_exit: k.exit == null ? null : k.exit, verified_dead: k.verified_dead === true });
         leg.ended_ms = leg.ended_ms || Date.now();
         try { if (leg.out) leg.out.close(); if (leg.err) leg.err.close(); } catch {}
       }
     }
+
+    for (const k of killReport) k.cancel_timing = cancelTiming.filter(s => s.pid === k.pid);
 
     const legRecords = [];
     for (const leg of this.legs.values()) {

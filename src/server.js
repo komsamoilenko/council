@@ -935,6 +935,12 @@ async function doctorReport(ctx, deep) {
         + 'call council_list or council_poll (or wait for the 60 s sweep) to confirm and finalise them.');
     }
     rep.ledger = ledger.health(ctx);
+    try {
+      rep.cancel_timings = ledger.readRows(ctx, { sinceMs: Date.now() - 24 * 60 * 60 * 1000 }).rows
+        .filter(r => r.event === 'reaper_action' && r.action === 'cancel_timing')
+        .slice(-5).map(r => ({ job_id: r.job_id, ts: r.ts, ...r.cancel_timing }));
+    } catch { rep.cancel_timings = []; }
+
     rep.prune_hint = 'node "' + path.join(P.councilDir, 'tools', 'prune.mjs') + '" --older-than-days 30';
     for (const w of killRefusedWarnings(ctx)) rep.warnings.push(w);
   }

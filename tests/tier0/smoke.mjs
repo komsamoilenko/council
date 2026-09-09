@@ -17,6 +17,7 @@ import url from 'node:url';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import { makeProfile, finishProfile } from './profile.mjs';
+import { cancelDiagnostics } from './cancel-diagnostics.mjs';
 
 const nativeRequire = createRequire(import.meta.url);
 const require = rel => nativeRequire(rel.startsWith('../../src/') ? path.join(HERE,rel.slice('../../src/'.length)) : rel);
@@ -812,6 +813,10 @@ test('T-05b', 'council_poll waits for a real change, not for the heartbeat', asy
   } finally { await s.stop(); }
 }, { slow: true, requires: ['proc'], inspection: true });
 
+test('T-06-diagnostics', 'cancel timing shape with simulated process helpers', async t => {
+  await cancelDiagnostics(t, HERE);
+}, { requires: [] });
+
 test('T-06', 'cancel kills the tree, grandchild included', async (t) => {
   let grandkids = [];
   const s = await Server.start({}, 't06');
@@ -831,6 +836,8 @@ test('T-06', 'cancel kills the tree, grandchild included', async (t) => {
     const c = await s.tool('council_cancel', { job_id: jobId }, 30000);
     const took = Date.now() - t0;
     t.eq(stateOf(c.payload), 'cancelled', 'cancel returns cancelled');
+    t.note('T-06 cancel completed in ' + took + ' ms; cancel_timing=' + JSON.stringify(c.payload.cancel_timing));
+    t.ok(c.payload.cancel_timing && Array.isArray(c.payload.cancel_timing.stages), 'cancel stage timings returned');
     t.ok(took < 8000, 'cancel completed in ' + took + ' ms');
     t.ok(await waitDone(jobId, 5000), 'DONE written');
     t.eq(c.payload.killed && c.payload.killed.verified_dead, true, 'runner verified dead');

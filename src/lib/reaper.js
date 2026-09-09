@@ -11,6 +11,7 @@
  */
 
 const path = require('path');
+const { performance } = require('perf_hooks');
 const jobstore = require('./jobstore.js');
 const ledger = require('./ledger.js');
 const procwin = require('../platform');
@@ -385,6 +386,30 @@ function childrenFromPayload(payload) {
  * @returns {Promise<Object>} CancelResult (INTERFACES §4.7)
  */
 async function cancelJob(ctx, jobId, o) {
+  const started = performance.now();
+  const stages = [];
+  const local = { ...ctx, cancelTiming: stages, cancelStarted: started };
+  const result = await cancelJobImpl(local, jobId, o);
+  const elapsed = Math.round(performance.now() - started);
+  const polls = stages.filter(s => s.stage === 'death_poll');
+  const fresh = reload(ctx, jobId) || {};
+  const runnerStages = (fresh.state && fresh.state.cancel_timing) || [];
+  result.cancel_timing = {
+    total_ms: elapsed,
+    // Null means this request did not establish death of every reported target.
+    verified_dead_ms: result.found && result.killed.verified_dead &&
+      result.children_cancelled.every(c => c.verified_dead) ? local.cancelVerifiedMs : null,
+    taskkill_ms: stages.filter(s => s.stage === 'tree_kill').reduce((n, s) => n + s.ms, 0),
+    death_poll_count: polls.length,
+    death_poll_ms: polls.reduce((n, s) => n + s.ms, 0),
+    stages,
+    runner: runnerStages,
+  };
+  row(ctx, { event: 'reaper_action', action: 'cancel_timing', job_id: jobId, cancel_timing: result.cancel_timing });
+  return result;
+}
+
+async function cancelJobImpl(ctx, jobId, o) {
   const opts = o || {};
   const source = opts.source || 'tool';
   const reason = opts.reason == null ? null : String(opts.reason);
@@ -403,6 +428,7 @@ async function cancelJob(ctx, jobId, o) {
   if (view.done || view.terminal) {
     const rp = view.state ? view.state.runner_pid : null;
     const dead = rp ? !(await procwin.isAlive(ctx, rp)) : true;
+    ctx.cancelVerifiedMs = Math.round(performance.now() - ctx.cancelStarted);
     return {
       job_id: jobId, state: view.state_derived, found: true, already_terminal: true,
       killed: { runner_pid: rp || null, verified_dead: dead, tree_kill_exit: null, refused: null },
@@ -421,6 +447,7 @@ async function cancelJob(ctx, jobId, o) {
 
   /* 3. give the runner up to ~2 s to finalise on its own 500 ms cancel.json watch. */
   const grace = Math.max(CANCEL_GRACE_MS, 4 * num(timing(ctx).cancel_watch_ms, 500));
+  const graceStarted = performance.now();
   const graceDeadline = Date.now() + grace;
   while (Date.now() < graceDeadline) {
     await sleep(CANCEL_POLL_MS);
@@ -428,8 +455,10 @@ async function cancelJob(ctx, jobId, o) {
     if (!v2) break;
     view = v2;
     if (v2.done) {
+      ctx.cancelTiming.push({ stage: 'grace', ms: Math.round(performance.now() - graceStarted) });
       const rp = v2.state ? v2.state.runner_pid : null;
       const dead = rp ? !(await procwin.isAlive(ctx, rp)) : true;
+    ctx.cancelVerifiedMs = Math.round(performance.now() - ctx.cancelStarted);
       return {
         job_id: jobId, state: v2.state_derived, found: true, already_terminal: false,
         killed: { runner_pid: rp || null, verified_dead: dead, tree_kill_exit: null, refused: null },
@@ -438,6 +467,8 @@ async function cancelJob(ctx, jobId, o) {
       };
     }
   }
+
+  ctx.cancelTiming.push({ stage: 'grace', ms: Math.round(performance.now() - graceStarted) });
 
   /* 4. identity-check the runner, then tree kill /T /F. */
   const runnerPid = view.state ? view.state.runner_pid : null;
@@ -478,6 +509,8 @@ async function cancelJob(ctx, jobId, o) {
       }
     }
   }
+
+  ctx.cancelVerifiedMs = Math.round(performance.now() - ctx.cancelStarted);
 
   /* 5b. the runner may have finalised while we were killing; never double-write. */
   const v3 = reload(ctx, jobId) || view;

@@ -14,6 +14,19 @@ const { execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { performance } = require('perf_hooks');
+
+// Request-local diagnostics: concurrent cancels never share counters.
+async function measured(ctx, stage, pid, action) {
+  const start = performance.now();
+  try { return await action(); } finally {
+    if (ctx && ctx.cancelTiming) {
+      ctx.cancelTiming.push({ stage, pid: toPid(pid), ms: Math.round(performance.now() - start) });
+      // Best-effort persistence lets a server kill retain completed runner stages.
+      try { if (ctx.saveCancelTiming) ctx.saveCancelTiming(); } catch {}
+    }
+  }
+}
 const { APP_VERSION } = require('../version');
 
 /** Wall-clock bounds for the helper processes; none of them ever waits on a model. */
@@ -143,6 +156,9 @@ function tasklistHasPid(stdout, pid) {
  * @returns {Promise<{state:'found'|'gone'|'unknown', info:Object|null, error:string|null}>}
  */
 async function probe(ctx, pid) {
+  return measured(ctx, 'identity', pid, () => probeImpl(ctx, pid));
+}
+async function probeImpl(ctx, pid) {
   const n = toPid(pid);
   if (n === null) return { state: 'unknown', info: null, error: 'invalid pid' };
   const ps = ctx && ctx.paths && ctx.paths.binaries ? ctx.paths.binaries.powershell : null;
@@ -189,6 +205,9 @@ async function inspect(ctx, pid) {
  * @param {Object} ctx @param {*} pid @returns {Promise<'alive'|'gone'|'unknown'>}
  */
 async function livenessOf(ctx, pid) {
+  return measured(ctx, 'liveness', pid, () => livenessOfImpl(ctx, pid));
+}
+async function livenessOfImpl(ctx, pid) {
   const n = toPid(pid);
   if (n === null) return 'unknown';
   const tl = ctx && ctx.paths && ctx.paths.binaries ? ctx.paths.binaries.tasklist : null;
@@ -271,10 +290,13 @@ async function verifyLeaf(ctx, pid, o) {
  * @returns {Promise<boolean>} true when the PID is no longer listed
  */
 async function waitForDeath(ctx, pid, timeoutMs) {
+  return measured(ctx, 'wait_for_death', pid, () => waitForDeathImpl(ctx, pid, timeoutMs));
+}
+async function waitForDeathImpl(ctx, pid, timeoutMs) {
   const budget = Number.isFinite(Number(timeoutMs)) ? Number(timeoutMs) : DEATH_WAIT_MS;
   const deadline = Date.now() + Math.max(0, budget);
   for (;;) {
-    const l = await livenessOf(ctx, pid);
+    const l = await measured(ctx, 'death_poll', pid, () => livenessOf(ctx, pid));
     if (l === 'gone') return true;
     // 'unknown' is NOT death: keep polling, and report false when the budget runs out,
     // which surfaces as orphan_suspected rather than as a clean kill (SPEC §9).
@@ -295,7 +317,7 @@ async function treeKill(ctx, pid) {
   if (n === null) return { ok: false, exit: null, stdout: '', stderr: 'invalid pid', verified_dead: false };
   const tk = ctx && ctx.paths && ctx.paths.binaries ? ctx.paths.binaries.taskkill : null;
   if (!tk) return { ok: false, exit: null, stdout: '', stderr: 'taskkill path missing', verified_dead: false };
-  const r = await run(tk, ['/PID', String(n), '/T', '/F'], TASKKILL_TIMEOUT_MS);
+  const r = await measured(ctx, 'tree_kill', n, () => run(tk, ['/PID', String(n), '/T', '/F'], TASKKILL_TIMEOUT_MS));
   const dead = await waitForDeath(ctx, n, DEATH_WAIT_MS);
   return { ok: dead, exit: r.exit, stdout: r.stdout, stderr: r.stderr, verified_dead: dead };
 }
