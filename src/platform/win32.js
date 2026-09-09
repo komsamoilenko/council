@@ -446,6 +446,12 @@ function secretGet(name) { return dpapi(name,'unprotect',fs.readFileSync(secretP
 function secretSet(name,value) { const p = secretPath(name); const blob = dpapi(name,'protect',value); fs.mkdirSync(path.dirname(p),{recursive:true}); fs.writeFileSync(p,blob,{mode:0o600}); }
 function secretDelete(name) { const p = secretPath(name); try { fs.unlinkSync(p); } catch(e) { if(e.code !== 'ENOENT') throw e; } }
 module.exports = {
+  processNameProbe: (name, env = process.env) => {
+    if (!/^[a-z]+$/.test(name)) throw new Error('invalid_process_name');
+    const sys = env.SYSTEMROOT || env.SystemRoot;
+    if (!sys) return null;
+    return {file:path.join(sys,'System32','WindowsPowerShell','v1.0','powershell.exe'),args:['-NoProfile','-NonInteractive','-Command',"@(Get-CimInstance Win32_Process -ErrorAction Stop -Filter \"Name='"+name+".exe'\").Count"]};
+  },
   executableNames, vendorBinary, desktopCliLayout, fileAttributesProbe,
   killPid, childrenOf,
   id:'win32', implemented:{proc:true,secrets:true,fileAttributes:true}, notImplementedReason:null,

@@ -15,6 +15,7 @@ platform identifier. Methods do not resolve system helpers through PATH.
 | longLivedChildArgv(), spawnDetachedOpts() | Echo grandchild and detached-process options |
 | credentialProbePaths(), hostConfigPaths(), planUsagePath() | Existence-only credential locations, host configs and quota history |
 | probe(ctx,pid), inspect(ctx,pid) | Discriminated process probe; compatibility nullable record |
+| processNameProbe(name,env) | Read-only absolute helper invocation returning a process count; null when unsupported; a failed probe never means idle |
 | isAlive(ctx,pid), livenessOf(ctx,pid) | Boolean observation; alive/gone/unknown distinction |
 | verifyRunner(ctx,pid,{jobId}) | Identity-checked runner observation |
 | verifyLeaf(ctx,pid,{expectedImage,runnerPid,createdAtMs}) | Identity-checked leaf observation |

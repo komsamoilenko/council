@@ -26,6 +26,7 @@ module.exports = function make(id) {
     systemBinaries: () => ({ ps: '/bin/ps', pgrep: '/usr/bin/pgrep', sh: '/bin/sh' }),
     longLivedChildArgv: () => ({ file: '/bin/sleep', args: ['300'] }),
     credentialProbePaths: () => ({ claude: path.join(homeDir(), '.claude/.credentials.json'), codex: path.join(homeDir(), '.codex') }),
+    processNameProbe: () => null,
     killPid: asyncFail('proc'), childrenOf: asyncFail('proc'), probe: asyncFail('proc'), inspect: asyncFail('proc'), isAlive: asyncFail('proc'), livenessOf: asyncFail('proc'), verifyRunner: asyncFail('proc'), verifyLeaf: asyncFail('proc'), waitForDeath: asyncFail('proc'), treeKill: asyncFail('proc'), spawnDetachedOpts: fail('proc'),
     fileAttributes: asyncFail('fileAttributes'), restrictToOwner: asyncFail('fileAttributes'),
     isCloudSynced: async p => ({ synced: /(?:^|\/)(?:Dropbox|OneDrive|Google Drive|Mobile Documents)(?:\/|$)/i.test(p), evidence: ['path-name heuristic'], unknown: true }),

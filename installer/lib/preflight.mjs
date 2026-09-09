@@ -26,7 +26,7 @@ export async function probeVault(vault, { io = fs, platform, onWarning = () => {
       try { io.rmdirSync(p); removed.push(p); }
       catch (error) {
         const warning = { path: p, code: error.code, message: 'S0-created directory left in place; empty-only removal failed.' };
-        warnings.push(warning); onWarning(warning); failure ||= error;
+        warnings.push(warning); onWarning(warning);
       }
     }
   }

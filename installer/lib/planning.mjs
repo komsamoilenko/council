@@ -9,8 +9,9 @@ import { render, renderVault, layout } from './render.mjs';
 import { mergeMarkerFile, scanMarkers, hashBody } from './markers.mjs';
 import { spliceTomlFile } from './tomlblock.mjs';
 import { entryState, validateManifest } from './manifest.mjs';
-import { safewrite } from './safewrite.mjs';
+import { safewrite, byteEdit } from './safewrite.mjs';
 import { planBytes, planFileHash } from './report.mjs';
+import { machineBytes } from './machine.mjs';
 import { stamp, scanDuplicates, reportTarget, publishDuplicate } from './duplicates.mjs';
 
 const repo = fileURLToPath(new URL('../../', import.meta.url));
@@ -78,6 +79,7 @@ export async function buildPlan(options, ctx) {
   const plan = { schema: 1, verb: 'plan', profile, created_at: ctx.now().toISOString(), file,
     answers: Object.fromEntries(Object.entries(a).filter(([key]) => !['answers','json','log','verbose','no-color'].includes(key))),
     detect_fingerprint: fingerprint(detect, a['register-as'] || 'council'), steps: [], registrations: [], pending_hosts: [], untouched: [], warnings: [...detect.warnings] };
+  plan.adoptions=[];plan.proposals=[];
   if (a.log) plan.warnings.push('--log suppressed by the read-only output invariant.');
   if (info.cloud?.synced) plan.warnings.push('cloud sync: ' + info.cloud.signal + ' / ' + info.cloud.detail + (info.cloud.scope ? ' (' + info.cloud.scope + ')' : ''));
   if (a['gemini-key'] === 'now') plan.warnings.push('Key setup requested; run council-setup set-key after apply. No key is requested or stored by plan.');
@@ -98,12 +100,19 @@ export async function buildPlan(options, ctx) {
     const present = exists(target), directory = extra.directory || false;
     if (present && directory) { if (!fs.statSync(target).isDirectory()) throw fail('E-VAULT-NOT-A-DIR',target); return; }
     if (present && data !== undefined && fs.readFileSync(target).equals(Buffer.from(data))) return;
-    const w = { path: target, action: present ? 'rewrite' : 'create', bytes: directory ? 0 : data === undefined ? null : Buffer.byteLength(data), ...extra };
-    if (data !== undefined) w.content = String(data);
+    const w = { path: target, action: present ? 'rewrite' : 'create', bytes: directory ? 0 : data === undefined ? null : Buffer.byteLength(data), ...extra,
+      before_sha256: present && !directory ? sha256(fs.readFileSync(target)) : null };
+    if (data !== undefined) {
+      if(present&&under(target,a.vault)) {
+        const edit=byteEdit(fs.readFileSync(target),Buffer.from(data));
+        w.splice={start:edit.oldRange.start,end:edit.oldRange.end,bytes_base64:edit.bytes.subarray(edit.newRange.start,edit.newRange.end).toString('base64')};
+      } else w.content = String(data);
+    }
     if (present) { w.beforeBytes = fs.statSync(target).size; w.backup ||= backup(target, under(target,a.vault) ? path.join('vault',path.relative(a.vault,target)) : undefined); }
     steps.get(id).writes.push(w); return w;
   };
   const dir = (id,p) => add(id,p,undefined,{directory:true});
+  steps.get('S7').temporaries = [{root:'os.tmpdir()',prefix:'council-smoke-',cleanup:'success only; retain and report on failure'}];
   if (!transplanted) {
     dir('S0',path.join(a.vault,'.council'));
     add('S0',path.join(a.vault,'.council','.write-probe'),'',{ note: "created and removed inside apply's preflight", transient: true });
@@ -123,6 +132,10 @@ export async function buildPlan(options, ctx) {
   add('S3',ctx.dirs.current,JSON.stringify({ ...readJSON(ctx.dirs.current), version: '0.1.0' },null,2)+'\n');
   const relocated = a['relocate-runtime'];
   const layoutPaths = { work_dir: config?.layout?.work_dir || 'work', jobs_dir: relocated ? path.join(info.runtimeRoot,'jobs') : config?.layout?.jobs_dir || 'work/jobs', ledger_dir: relocated ? path.join(info.runtimeRoot,'ledger') : config?.layout?.ledger_dir || 'ledger' };
+  if(transplanted&&!config) {
+    layoutPaths.jobs_dir=path.join(info.runtimeRoot,'jobs');layoutPaths.ledger_dir=path.join(info.runtimeRoot,'ledger');
+    plan.warnings.push('Transplanted profile uses new local jobs and ledger directories; existing vault runtime data is retained.');
+  }
   for (const value of Object.values(layoutPaths)) {
     const target=path.resolve(a.vault,value);
     if (await linked(target,ctx)) throw fail('E-REPARSE-TARGET',target);
@@ -143,10 +156,11 @@ export async function buildPlan(options, ctx) {
   const proposedConfig = JSON.parse(render(fs.readFileSync(path.join(templates,'profile','config.template.json'),'utf8'),values,{}, {json:true}));
   add('S4',ctx.dirs.config,JSON.stringify({ ...proposedConfig, ...config, profile, vault:a.vault, runtime_root:info.runtimeRoot, layout:layoutPaths, server_name:values.SERVER_NAME, created_by:'council-setup 0.1.0' },null,2)+'\n');
   if (!exists(ctx.dirs.accounts)) add('S4',ctx.dirs.accounts,fs.readFileSync(path.join(templates,'profile','accounts.template.json')));
-  add('S4',ctx.dirs.machine,undefined,{note:'merge installer-owned machine keys; preserve all other keys'});
+  add('S4',ctx.dirs.machine,machineBytes(readJSON(ctx.dirs.machine),detect,ctx,profile),{note:'merge installer-owned machine keys; preserve all other keys'});
   for (const p of ['claude','codex','gemini','echo']) dir('S5',path.join(info.runtimeRoot,'sandbox',p));
   dir('S5',path.join(info.runtimeRoot,'secrets'));
   for (const p of [layoutPaths.jobs_dir,layoutPaths.ledger_dir]) dir(under(path.resolve(a.vault,p),info.runtimeRoot)?'S5':'S6',path.resolve(a.vault,p));
+  dir(under(path.resolve(a.vault,layoutPaths.jobs_dir),info.runtimeRoot)?'S5':'S6',path.join(path.resolve(a.vault,layoutPaths.jobs_dir),'.idem'));
   const flags = { INDEX: a.conventions || exists(path.join(a.vault,'INDEX.md')), CONVENTIONS: a.conventions };
   const targetContract = { schema:1, profile, vault_id:contract?.vault_id || randomUUID(), contract_version:1, app_version:'0.1.0', installed_at:contract?.installed_at || plan.created_at, note:'Paths and credentials are local; this contract travels with the vault.' };
   add('S6',path.join(a.vault,'.council','vault.json'),JSON.stringify(targetContract,null,2)+'\n',{note:'path-free vault contract; preserve user keys', ...(contract ? { content: undefined } : {})});
@@ -164,15 +178,30 @@ export async function buildPlan(options, ctx) {
     if (strategy === 'none' && item?.exists) { plan.untouched.push(target + (item?.protocol ? ' (contract already present; I will not write into this file)' : ' (strategy none)')); continue; }
     if (strategy === 'ask') throw fail('E-USAGE','Choose block, none or sidecar for ' + name + ' in --answers.');
     const full = name === '.gitignore' ? null : renderVault(vaultTemplates,name+'.tmpl',values,flags);
+    const owned=manifest?.entries?.find(e=>e.path===target);
+    if(item?.exists&&owned?.kind==='file'&&owned.sha256!==sha256(fs.readFileSync(target))) {
+      const sibling=target+'.council-new.'+ts;
+      if(exists(sibling))throw fail('E-SIDECAR-EXISTS',sibling);
+      const proposal=full||fs.readFileSync(target,'utf8');
+      add('S6',sibling,proposal);plan.proposals.push({path:target,sibling,before_source:target,after:proposal});plan.untouched.push(target+' (user edit retained)');continue;
+    }
     const renderedBlock = name === 'AGENTS.md' ? renderVault(vaultTemplates,'AGENTS.block.md.tmpl',values,flags,{fullContract:true}) : null;
     const body = name === '.gitignore' ? SIX_IGNORE_LINES.join('\n') : name === 'AGENTS.md' ? scanMarkers(Buffer.from(renderedBlock)).block.body.toString('utf8') :
       name === 'CLAUDE.md' ? '@AGENTS.md\nUse council_start / council_poll for consultations.\nFollow AGENTS.md for the council protocol.\n' : '# Vault index\n\nOne line per artifact: path — description — agent — date.\nAppend new entries at the bottom.\nKeep prior entries unchanged.\nUse a vault-relative path.\n';
     if (!item?.exists) { if (!transplanted) add('S6',target,name === '.gitignore' ? '# council:begin v=1\n'+body+'\n# council:end\n' : full); continue; }
     const recorded = manifest?.entries?.find(f => f.path === target)?.block_sha256_eolnorm;
-    const templateHashes = [hashBody(body)];
+    const templateHashes = [hashBody(body),hashBody(body+'\n')];
     if (name === 'AGENTS.md') templateHashes.push(hashBody(scanMarkers(Buffer.from(renderVault(vaultTemplates,'AGENTS.block.md.tmpl',values,flags))).block.body));
     const merged = await mergeMarkerFile(target,body,{dryRun:true,strategy, recordedHash:recorded, templateHashes, platform:{implemented:{fileAttributes:false}}});
-    if (!merged.ok) throw fail(merged.code,target);
+    if (!merged.ok) {
+      if(owned?.kind==='block'&&merged.code.replaceAll('_','-')==='E-BLOCK-CHANGED') {
+        const sibling=target+'.council-new';if(exists(sibling))throw fail('E-SIDECAR-EXISTS',sibling);
+        const proposal=merged.proposal?.toString('utf8')||renderedBlock||full||body;
+        add('S6',sibling,proposal);plan.proposals.push({path:target,sibling,before_source:target,after:proposal});plan.untouched.push(target+' (user block edit retained)');continue;
+      }
+      throw fail(merged.code,target);
+    }
+    if(merged.adopted&&!merged.changed)plan.adoptions.push({path:target,kind:'block',block_id:'council:contract',contract_version:1,block_sha256_eolnorm:hashBody(scanMarkers(fs.readFileSync(target),{style:name==='.gitignore'?'hash':'markdown'}).block.body),pre_existing:true,backup:null,adopted:true,removal:'excise_block'});
     if (transplanted) { plan.untouched.push(target + ' (transplanted contract left in place)'); continue; }
     if (merged.action === 'none') { plan.untouched.push(target); continue; }
     if (merged.action === 'sidecar') { if (merged.proposalConflict) throw fail('E-USAGE','Sidecar exists: '+merged.sibling); add('S6',merged.sibling,merged.proposal); plan.untouched.push(target+' (add '+merged.importLine+' manually)'); }
@@ -196,27 +225,30 @@ export async function buildPlan(options, ctx) {
   if (a['desktop-config'] && !desktop.some(h => h.path === path.resolve(a['desktop-config']))) throw fail('E-USAGE','desktop-config must name a detected config.');
   for (const surface of chosen) {
     const host = hosts.find(h => h.surface === surface && (surface !== 'claude-desktop' || (a['desktop-config'] ? h.path === path.resolve(a['desktop-config']) : h.exists)));
-    const available = surface === 'claude-code' ? clis.claude.usable : surface === 'codex' ? clis.codex.usable : !!host;
+    const available = surface === 'claude-code' ? clis.claude.usable || !!host?.exists : surface === 'codex' ? clis.codex.usable : !!host;
     if (!available || !host) { plan.pending_hosts.push(surface); continue; }
     const registration = { surface, path:host.path, name:values.SERVER_NAME, command:ctx.node,args:[ctx.dirs.launcher], env:{COUNCIL_HOST:surface,COUNCIL_PROFILE:profile} };
     if (host.entries[values.SERVER_NAME]) {
       const owned = manifest?.registrations.find(r => r.file === host.path && r.name === values.SERVER_NAME);
       if (owned && entryState(owned,manifest).state === 'unchanged') { plan.untouched.push(host.path+' (verified council registration)'); continue; }
-      throw fail('E-HOST-NAME-TAKEN', host.path + ': ' + values.SERVER_NAME);
+      const target=host.entries[values.SERVER_NAME].pointsTo?.args?.[0];
+      if(typeof target!=='string'||!/(?:^|[\\/])council[\\/](?:app[\\/][^\\/]+[\\/])?server\.js$/i.test(target))throw fail('E-HOST-NAME-TAKEN', host.path + ': ' + values.SERVER_NAME);
+      registration.adoptExisting=true;
+      plan.warnings.push('Adoption requires apply --adopt-existing: '+host.path);
     }
     plan.registrations.push(registration);
     if (surface === 'codex') {
       const body = `[mcp_servers.${values.SERVER_NAME}]\ncommand = ${JSON.stringify(ctx.node)}\nargs = [${JSON.stringify(ctx.dirs.launcher)}]\ntool_timeout_sec = 60\n[mcp_servers.${values.SERVER_NAME}.env]\nCOUNCIL_HOST = "codex"\nCOUNCIL_PROFILE = ${JSON.stringify(profile)}\n`;
-      const merge = await spliceTomlFile(host.path,body,{dryRun:true,name:values.SERVER_NAME,platform:{implemented:{fileAttributes:false}}});
+      const merge = await spliceTomlFile(host.path,body,{dryRun:true,name:values.SERVER_NAME,adoptExisting:registration.adoptExisting,platform:{implemented:{fileAttributes:false}}});
       if (!merge.ok) throw fail(merge.code,host.path);
-      add('S8',host.path,merge.bytes,{note:'marked TOML block; other tables preserved'});
-    } else add('S8',host.path,undefined,{note:surface === 'claude-code' ? 'via claude mcp add-json; user scope' : 'mcpServers.'+values.SERVER_NAME+' only'});
+      add('S8',host.path,undefined,{backup:host.exists?backup(host.path,path.join('hosts',surface,path.basename(host.path))):undefined,note:'marked TOML block; other tables preserved'});
+    } else add('S8',host.path,undefined,{backup:host.exists?backup(host.path,path.join('hosts',surface,path.basename(host.path))):undefined,note:surface === 'claude-code' ? 'via claude mcp add-json; user scope' : 'mcpServers.'+values.SERVER_NAME+' only'});
   }
   add('S9',ctx.dirs.manifest,undefined,{note:'ownership manifest; generated by apply'});
   // Every touched pre-image gets a whole-file backup, including local metadata.
-  for (const w of plan.steps.flatMap(s => s.writes)) if (w.backup) add('S2',w.backup,fs.readFileSync(w.path),{note:'whole-file pre-image; owner-only ACL checked by apply'});
+  for (const w of plan.steps.flatMap(s => s.writes)) if (w.backup) add('S2',w.backup,undefined,{source:w.path,bytes:fs.statSync(w.path).size,source_sha256:sha256(fs.readFileSync(w.path)),note:'whole-file pre-image; owner-only ACL checked by apply'});
   if (transplanted) {
-    plan.steps = plan.steps.filter(s => ['S3','S4','S5','S6','S8'].includes(s.id));
+    // Transplant narrows vault edits, not transaction safety stages.
     steps.get('S6').writes = steps.get('S6').writes.filter(w => w.path === path.join(a.vault,'.council','vault.json'));
     plan.warnings.push('Transplanted vault: S3–S5 and S8, plus path-free vault contract refresh; existing vault structure is retained.');
   }

@@ -60,7 +60,7 @@ An adapter for Google's Antigravity CLI exists in the source and **is disabled**
 |---|---|
 | Design | complete — repository, installer, migration and test plan specified and adversarially reviewed |
 | Runtime (v1) | working privately: 27 zero-quota tests green, one real call verified per leg, running in three hosts on one machine |
-| This repository | scaffolding only — the port, the installer and the tests land next |
+| This repository | runtime, read-only planning, apply, host registration and rollback implemented; verify, update and uninstall remain pending |
 | Platforms | Windows implemented; macOS and Linux are designed for and stubbed, not written |
 | Release | none yet. No tags, no npm package, nothing to install |
 
@@ -72,8 +72,8 @@ Nothing here works yet; this is the shape it will take.
 
 ```
 council-setup detect     # report what is installed, signed in and registered. Writes nothing.
-council-setup plan       # print every download, write and overwrite. Writes nothing.
-council-setup apply      # do it, journalled and reversible
+  council-setup plan       # declare writes and save a plan outside the vault
+  council-setup apply --plan <saved-plan> --yes  # journalled and reversible
 council-setup verify     # run the zero-quota suite and council_doctor in every host
 council-setup uninstall  # unregister, and remove only what the manifest says we created
 ```

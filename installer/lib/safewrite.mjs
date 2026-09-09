@@ -106,15 +106,20 @@ export async function writeSplice(file, before, result, { dryRun = true, backup,
 // Host recovery never consumes backup bytes. recover receives the live bytes and
 // must return a splice restoring only the recorded entry/table. Re-check those
 // bytes immediately before recovery so a concurrent host change is never reverted.
-export async function writeHostSplice(file, before, result, { dryRun = true, backup, writer = safewrite, recover } = {}) {
+export async function writeHostSplice(file, before, result, { dryRun = true, backup, writer = safewrite, recover, verify, serializedByHost = false } = {}) {
   assertOutside(before, result.bytes, result.oldRange, result.newRange);
   if (dryRun || before.equals(result.bytes)) return result;
   if (typeof recover !== 'function') throw new Error('host_recovery_required');
-  if (fs.existsSync(file) && (!backup || !fs.readFileSync(backup).equals(before))) throw new Error('backup_required');
+  if (typeof verify !== 'function') throw new Error('host_content_verifier_required');
+  if (fs.existsSync(file) && (!backup || !fs.existsSync(backup))) throw new Error('backup_required');
   const read = () => { try { return fs.readFileSync(file); } catch (error) { if (error.code !== 'ENOENT') throw error; return Buffer.alloc(0); } };
   if (!read().equals(before)) throw Object.assign(new Error('plan_stale'), { exitCode: 3 });
   await writer(file, result.bytes);
-  try { assertOutside(before, read(), result.oldRange, result.newRange); }
+  try {
+    const actual=read();
+    if (!verify(actual)) throw new Error('host_content_mismatch');
+    if (!serializedByHost) assertOutside(before,actual,result.oldRange,result.newRange);
+  }
   catch (error) {
     const current = read(), restore = recover(current);
     if (!restore?.ok) throw Object.assign(error, { recovery: 'refused', recoveryCode: restore?.code });
@@ -139,4 +144,11 @@ export async function rejectReparse(file, platform) {
     } catch (e) { if (e.code !== 'ENOENT') throw e; }
     if (path.dirname(p) === p) return false;
   }
+}
+
+export function byteEdit(before,after) {
+  let start=0,end=before.length,newEnd=after.length;
+  while(start<end&&start<newEnd&&before[start]===after[start])start++;
+  while(end>start&&newEnd>start&&before[end-1]===after[newEnd-1]){end--;newEnd--;}
+  return {ok:true,bytes:after,oldRange:{start,end},newRange:{start,end:newEnd}};
 }

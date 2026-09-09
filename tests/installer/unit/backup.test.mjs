@@ -12,6 +12,14 @@ async function fixture(root) {
 }
 const host = result => ({implemented:{fileAttributes:false},restrictToOwner:async () => result});
 export default async function(test) {
+  await test('absent vault resolves through its nearest existing ancestor (A-34)', async root => {
+    const etc = path.join(root, 'etc'); fs.mkdirSync(etc);
+    const vault = path.join(root, 'absent', 'notes');
+    const result = await backupFiles({etc, vault, profile:'default', timestamp:'absent',
+      files:[{source:path.join(vault, 'AGENTS.md'), mirror:'vault/AGENTS.md'}], platform:host({ok:true})});
+    assert.deepEqual(result.backups, []);
+    assert.equal(fs.existsSync(path.join(root, 'absent')), false);
+  });
   await test('real whole-file copy, immutable and journalled', async root => {
     const args=await fixture(root), file=path.join(args.etc,'journal.jsonl'), j=journal(file);
     await j.before({t:'begin',plan_sha256:sha256('plan')});

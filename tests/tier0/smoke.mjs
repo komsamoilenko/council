@@ -16,14 +16,16 @@ import path from 'node:path';
 import url from 'node:url';
 import crypto from 'node:crypto';
 import os from 'node:os';
-import { makeProfile } from './profile.mjs';
+import { makeProfile, finishProfile } from './profile.mjs';
 
-const require = createRequire(import.meta.url);
+const nativeRequire = createRequire(import.meta.url);
+const require = rel => nativeRequire(rel.startsWith('../../src/') ? path.join(HERE,rel.slice('../../src/'.length)) : rel);
 const ROOT = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '../..');
-const HERE = path.join(ROOT, 'src');
+const appIndex = process.argv.indexOf('--app');
+const HERE = appIndex < 0 ? path.join(ROOT, 'src') : path.resolve(process.argv[appIndex+1]);
 const SERVER_JS = path.join(HERE, 'server.js');
 const platform = require('../../src/platform');
-const fixture = makeProfile(ROOT, platform);
+const fixture = makeProfile(ROOT, platform, HERE);
 const CONFIG_JSON = fixture.configPath;
 const TMP = fixture.tmp;
 const paths = require('../../src/lib/paths.js');
@@ -63,6 +65,7 @@ const out = (s) => process.stdout.write(s + '\n');
 const SMOKE_JOBS = new Set();
 /** The tail of every server's stderr, printed after a failure under --verbose. */
 let SERVER_STDERR = '';
+const ACTIVE_SERVERS = new Set();
 
 /** STOP files this process created, removed on exit (never one it found). */
 const MADE_STOP = new Set();
@@ -95,6 +98,8 @@ class Server {
     for (const k of Object.keys(env)) if (env[k] === undefined || env[k] === null) delete env[k];
     const s = new Server(env, label);
     s.child = spawn(NODE, [SERVER_JS], { env, cwd: HERE, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    ACTIVE_SERVERS.add(s);
+    s.closed = new Promise(resolve=>s.child.once('close',resolve));
     s.child.stdout.setEncoding('utf8');
     s.child.stdout.on('data', (d) => s.onData(d));
     s.child.stderr.setEncoding('utf8');
@@ -169,8 +174,9 @@ class Server {
 
   async stop() {
     try { this.child.stdin.end(); } catch {}
-    await sleep(150);
-    try { this.child.kill(); } catch {}
+    if(this.child.exitCode===null&&this.child.signalCode===null) { try { this.child.kill(); } catch {} }
+    await this.closed;
+    ACTIVE_SERVERS.delete(this);
   }
 }
 
@@ -1640,12 +1646,40 @@ async function main() {
     if (reason) { skipped++; out('SKIP ' + spec.id + '  ' + reason); continue; }
     const t = new T(spec.id, spec.name);
     SERVER_STDERR = '';
+    const diskJobs=()=>{
+      const ids=new Set();
+      const walk=p=>{if(!fs.existsSync(p))return;for(const e of fs.readdirSync(p,{withFileTypes:true})){if(!e.isDirectory())continue;const dir=path.join(p,e.name);if(fs.existsSync(path.join(dir,'request.json')))ids.add(e.name);else walk(dir);}};
+      walk(P.jobsRoot);return ids;
+    };
+    const priorJobs = diskJobs();
     const started = Date.now();
     try {
       await spec.fn(t);
     } catch (e) {
       t.fails.push('threw: ' + String(e && e.stack || e).split('\n').slice(0, 3).join(' | '));
     }
+    let cleanupFailed=false;
+    try {
+      for(const s of [...ACTIVE_SERVERS])await s.stop();
+      for(const id of diskJobs())if(!priorJobs.has(id)) {
+        const state=readJob(id,'state.json')||{};
+        const pids=[state.runner_pid,...Object.values(state.legs||{}).map(l=>l.pid)].filter(Boolean);
+        for(const pid of new Set(pids)) {
+          const alive=()=>{try{process.kill(pid,0);return true;}catch(e){if(e.code==='ESRCH')return false;throw e;}};
+          if(!alive())continue;
+          t.note('cleanup found live process '+pid+' for '+id);
+          const deadline=Date.now()+2000;
+          while(alive()&&Date.now()<deadline)await sleep(50);
+          if(!alive())continue;
+          const info=await platform.probe(PROC_CTX,pid);
+          if(info.state==='unknown')throw new Error('cleanup identity unknown: '+pid);
+          if(info.state!=='found')continue;
+          const command=info.info.CommandLine||'';
+          if(!command.includes(id)&&!command.includes(TMP))throw new Error('cleanup identity mismatch: '+pid);
+          await killPid(pid,true);
+        }
+      }
+    }catch(e){cleanupFailed=true;t.fails.push('cleanup: '+e.message);}
     const secs = ((Date.now() - started) / 1000).toFixed(1);
     if (t.fails.length) {
       failed++;
@@ -1661,6 +1695,7 @@ async function main() {
       out('PASS ' + spec.id + '  ' + spec.name + '  (' + secs + ' s)');
     }
     for (const n of t.notes) out('       . ' + n);
+    if(cleanupFailed) {out('FAIL harness stopped: per-test process cleanup incomplete');return failed;}
   }
   out('');
   out((selected.length - failed - skipped) + '/' + selected.length + ' passed, ' + skipped + ' skipped, ' + failed + ' failed; 27/27 ported in ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s');
@@ -1668,7 +1703,8 @@ async function main() {
   return failed;
 }
 
-main().then((n) => { process.exitCode = n; }).catch((e) => {
+main().then((n) => { finishProfile(TMP, !n); process.exitCode = n; }).catch((e) => {
+  finishProfile(TMP, false);
   out('FAIL harness ' + String(e && e.stack || e));
   process.exitCode = 1;
 });

@@ -1,7 +1,7 @@
 // Owns exact TOML table splices without serialization; specification §9.4.
 import fs from 'node:fs';
 import platform from '../../src/platform/index.js';
-import { linesOf, scanMarkers, mergeMarkers, canonicalBlock, refusal } from './markers.mjs';
+import { linesOf, scanMarkers, mergeMarkers, canonicalBlock, refusal, hashBody } from './markers.mjs';
 import { safewrite, writeHostSplice, rejectReparse } from './safewrite.mjs';
 
 function tableName(text) {
@@ -100,7 +100,10 @@ export async function spliceTomlFile(file, body, options = {}) {
     }
     return { ...result, sibling };
   }
-  return writeHostSplice(file, before, result, { ...options, recover: current => restoreToml(current, before, result, options) });
+  return writeHostSplice(file, before, result, { ...options, verify: current => {
+    const scan=bytes=>scanMarkers(bytes,{style:'hash',ignoreLines:tokenizeToml(bytes).ignoreLines});
+    try {return hashBody(scan(current).block.body)===hashBody(scan(result.bytes).block.body);}catch{return false;}
+  }, recover: current => restoreToml(current, before, result, options) });
 }
 
 export function restoreToml(current, before, written, options = {}) {
@@ -112,7 +115,7 @@ export function restoreToml(current, before, written, options = {}) {
       !(h.names[0] === 'mcp_servers' && h.names[1] === (options.name || 'council')))) return refusal('E_TOML_FOREIGN_TABLE');
   const expectedTokens = tokenizeToml(written.bytes);
   const expected = scanMarkers(written.bytes, { style: 'hash', ignoreLines: expectedTokens.ignoreLines }).block;
-  if (!current.subarray(marked.block.start, marked.block.end).equals(written.bytes.subarray(expected.start, expected.end)))
+  if (hashBody(marked.block.body)!==hashBody(expected.body))
     return refusal('E_TOML_RECOVERY_CONFLICT');
   let start = marked.block.start;
   const separator = written.bytes.subarray(written.newRange.start, expected.start);

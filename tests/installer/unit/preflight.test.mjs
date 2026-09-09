@@ -24,9 +24,8 @@ export default async function(test) {
   });
   await test('nonempty created directory retained and reported', async root => {
     const vault = path.join(root, 'vault'), council = path.join(vault, '.council');
-    await assert.rejects(probeVault(vault, { io: { ...fs, fsyncSync(fd) { fs.fsyncSync(fd); fs.writeFileSync(path.join(council, 'user'), 'keep'); } } }), e => {
-      assert.deepEqual(e.record.warnings.map(w => w.path), [council, vault]); return e.exitCode === 2;
-    });
+    const result=await probeVault(vault, { io: { ...fs, fsyncSync(fd) { fs.fsyncSync(fd); fs.writeFileSync(path.join(council, 'user'), 'keep'); } } });
+    assert.deepEqual(result.warnings.map(w => w.path), [council, vault]);
     assert.equal(fs.readFileSync(path.join(council, 'user'), 'utf8'), 'keep');
   });
 }

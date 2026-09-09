@@ -20,9 +20,9 @@ export default async function(test) {
     const before = Buffer.from('{"mcpServers":{"other":{},"council":{"command":"old"}},"live":1}');
     await safewrite(file, before); await safewrite(backup, before);
     const r = spliceJsonEntry(before, 'council', {command:'new'});
-    await assert.rejects(writeHostSplice(file, before, r, { dryRun:false, backup,
-      writer: (p, bytes) => safewrite(p, bytes.toString().replace('"live":1', '"live":2')),
-      recover: current => spliceJsonEntry(current, 'council', r.previous) }), {code:'E_OUTSIDE_RANGE'});
+    await assert.rejects(writeHostSplice(file, before, r, { dryRun:false, backup,verify:bytes=>JSON.parse(bytes).mcpServers?.council?.command==='new',
+      writer: (p, bytes) => safewrite(p, bytes.toString().replace('"live":1', '"live":2').replace('"new"','"bad"')),
+      recover: current => spliceJsonEntry(current, 'council', r.previous) }), /host_content_mismatch/);
     assert.equal(fs.readFileSync(file, 'utf8'), before.toString().replace('"live":1', '"live":2'));
     assert.deepEqual(fs.readFileSync(backup), before);
     await assert.rejects(writeSplice(file, before, r, {dryRun:false,backup}), /host_requires_surgical_writer/);

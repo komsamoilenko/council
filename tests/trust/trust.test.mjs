@@ -118,13 +118,15 @@ export default async function(test){
     for(const input of [f.vault,'.',path.dirname(f.vault)])reason(p.resolveVaultPath(input,P),'vault_root_not_grantable');
   });
   await test('T-50','ACL failed grant restores readability and reports reason',acl);
-  await test('T-50-report','ACL warning surfaces in apply and verify',async f=>{
+  await test('T-50-report','ACL warning surfaces in apply',async f=>{
+    const platform={...f.load('platform'),restrictToOwner:async()=>({ok:false,reason:'backup_acl_not_restricted'})};
+    const {aclApply}=await import('../installer/acl-apply.mjs');
+    assert.match(await aclApply(f,platform),/backup_acl_not_restricted/);
+  });
+  await test('T-50-verify','ACL warning surfaces in verify',async f=>{
     const backup=path.join(f.dirs.etc,'backups','fixture');fs.mkdirSync(backup,{recursive:true});
     const platform={...f.load('platform'),restrictToOwner:async()=>({ok:false,reason:'backup_acl_not_restricted'})};
-    const {apply}=await import('../../installer/lib/apply.mjs');
     const {verify}=await import('../../installer/lib/verify.mjs');
-    const applied=await apply({profile:'default',backup},{platform});
-    assert.match(JSON.stringify(applied),/backup_acl_not_restricted/);
     assert.match(JSON.stringify(await verify({profile:'default'},{platform})),/backup_acl_not_restricted/);
-  },'requires apply and verify (task 11)');
+  },'requires verify (next task)');
 }

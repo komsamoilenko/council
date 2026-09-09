@@ -11,10 +11,14 @@ import { scanDuplicates, reportTarget, publishDuplicate, duplicateText } from '.
 import { newTask } from './lib/new-task.mjs';
 import { safewrite } from './lib/safewrite.mjs';
 import { forceUnlock } from './lib/lock.mjs';
+import { apply, applyReport } from './lib/apply.mjs';
+import { rollback } from './lib/rollback.mjs';
 
 const verbs = ['detect','plan','apply','verify','update','uninstall','install-prereqs','login','migrate','rollback','set-key','duplicates','new-task','unlock'];
 const globalValues = ['profile','log'], globalSwitches = ['json','no-color','verbose'];
 const flags = {
+  apply: { values:['plan'], switches:['yes','resume','dry-run','no-register','adopt-existing'] },
+  rollback: { values:['journal'], switches:['yes'] },
   unlock: { values:[], switches:['force-unlock'] },
   detect: { values:['vault','out'], switches:['duplicates'] },
   plan: { values:['vault','merge','hosts','register-as','owner','chat-language','answers'], switches:['conventions','relocate-runtime','large-vault','git-init','allow-unsupported-platform','duplicates'] },
@@ -23,7 +27,7 @@ const flags = {
 };
 export const usage = `Usage: node installer/setup.mjs <verb> [flags]
 Verbs: ${verbs.join(' ')}
-Implemented: detect plan duplicates new-task unlock. Other verbs are not in this build.
+Implemented: detect plan apply rollback duplicates new-task unlock. Other verbs are not in this build.
 Global: --profile <id> --json --no-color --verbose --log <file>
 detect: --vault <path> --duplicates --out <file>
 plan: --vault <path> --merge block|sidecar|none|ask --conventions --relocate-runtime
@@ -32,6 +36,8 @@ plan: --vault <path> --merge block|sidecar|none|ask --conventions --relocate-run
 duplicates: --vault <path> --max-files <1..200000> --out <etc/reports/file>
 new-task: <slug> --vault <path> --agents claude,codex,gemini
 unlock: --force-unlock (recover stale setup lock/claim; live owners stay refused)
+apply: --plan <file> --yes --resume
+rollback: --journal <timestamp>
 --log is accepted but does not write: detect/plan permit only their declared output files.
 Exit codes: 0 ok; 1 step failed; 2 usage/precondition; 3 stale plan; 4 conflict;
             5 open journal/declined; 6 unsupported platform; 7 verify drift.
@@ -68,6 +74,12 @@ export async function run(argv, overrides = {}) {
     options = {...loadAnswers(command.options.answers),...command.options};
     const ctx = context({...overrides,profile:options.profile || 'default'});
     let result, human, exitCode = 0;
+    if (command.verb === 'apply' || command.verb === 'rollback') {
+      result = command.verb === 'apply' ? await apply(options,ctx) : await rollback(options,ctx);
+      human = command.verb === 'apply' ? applyReport(result) : JSON.stringify(result,null,2)+'\n';
+      stdout(options.json ? JSON.stringify(result)+'\n' : human);
+      return result.exitCode || 0;
+    }
     if (command.verb === 'unlock') {
       if (await linked(ctx.dirs.etc,ctx)) throw fail('E-REPARSE-TARGET',ctx.dirs.etc);
       result = exists(ctx.dirs.etc) ? await forceUnlock(ctx.dirs.etc, overrides.lockOptions) : { ok:true };

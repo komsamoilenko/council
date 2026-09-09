@@ -13,18 +13,22 @@ export async function backupFiles({ etc, profile, timestamp, vault, files, platf
   if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(profile || '') || !/^[A-Za-z0-9_-]+$/.test(timestamp || '')) throw new Error('invalid_backup_location');
   const root = path.resolve(etc, 'backups');
   // Check the real existing anchor before creating any backup directory.
-  const realEtc = fs.realpathSync(etc), realVault = fs.realpathSync(vault);
+  let anchor = path.resolve(vault);
+  const suffix = [];
+  while (!fs.existsSync(anchor)) { suffix.unshift(path.basename(anchor)); anchor = path.dirname(anchor); }
+  const realEtc = fs.realpathSync(etc), realVault = path.join(fs.realpathSync(anchor), ...suffix);
   if (inside(realEtc, realVault) || inside(root, path.resolve(vault))) throw new Error('backup_inside_vault');
   if (await rejectReparse(root, host)) throw new Error('backup_reparse_target');
   const directory = path.join(root, profile, timestamp), destinations = new Set();
   // Validate every destination before the first mutation.
+  const vaultAbsent = !fs.existsSync(vault);
   const items = files.map(({ source, mirror }) => {
     if (typeof mirror !== 'string' || !mirror || path.isAbsolute(mirror) || mirror.split(/[\\/]/).some(s => !s || s === '.' || s === '..' || s.includes(':'))) throw new Error('invalid_backup_mirror');
     const destination = path.resolve(directory, mirror);
     if (!inside(destination, directory) || destinations.has(destination.toLowerCase())) throw new Error('backup_collision');
     destinations.add(destination.toLowerCase());
     return { source, destination };
-  });
+  }).filter(({ source }) => !(vaultAbsent && inside(path.resolve(source), path.resolve(vault))));
   if (await rejectReparse(directory, host)) throw new Error('backup_reparse_target');
   for (const { destination } of items) if (await rejectReparse(destination, host)) throw new Error('backup_reparse_target');
   fs.mkdirSync(root, { recursive: true });

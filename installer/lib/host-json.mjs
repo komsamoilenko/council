@@ -54,7 +54,11 @@ export function spliceJsonEntry(input, name, value) {
   } else {
     start = end = object.end - 1;
     const eol = original.includes(Buffer.from('\r\n')) ? '\r\n' : '\n';
-    const indent = /\n([ \t]+)"/.exec(original.toString('utf8'))?.[1] || '  ';
+    const text = original.toString('utf8');
+    const unit = /\n([ \t]+)"/.exec(text)?.[1] || '  ';
+    const first = object.members[0];
+    const prefix = first ? original.subarray(0,first.start).toString('utf8').split('\n').at(-1) : null;
+    const indent = prefix && /^[ \t]+$/.test(prefix) ? prefix : unit.repeat(servers ? 2 : 1);
     replacement = (object.members.length ? ',' : '') + eol + indent + JSON.stringify(key) + ': ' + JSON.stringify(servers ? value : { [name]: value }) + eol;
   }
   if (!before.length) { start = 0; end = 0; replacement = '{' + replacement + '}\n'; }
