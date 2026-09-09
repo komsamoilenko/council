@@ -450,6 +450,11 @@ class Job {
       for (const leg of this.legs.values()) {
         if (leg.state !== 'running' || !leg.pid) continue;
         leg.state = forced;
+        // Keep the probe: ChildProcess ownership/exitCode === null is only a
+        // point-in-time proof. Node/libuv closes the native handle on exit while
+        // asynchronous tree-kill helper can still be starting; retaining leg.child does
+        // not pin the pid through that kill. Disk-recovered pids have no handle
+        // at all. Neither case may bypass identity verification.
         const v = await procwin.verifyLeaf(killCtx, leg.pid, {
           expectedImage: leg.meta.expected_image, runnerPid: process.pid,
           createdAtMs: this.request.created_ms,

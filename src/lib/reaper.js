@@ -73,10 +73,10 @@ function stderrTail(view, legId) {
 /**
  * Identity-check and tree-kill every leg still marked running in state.json.
  * A leg that fails the identity check is REFUSED, never killed (SPEC §9).
- * @param {Object} ctx @param {Object} view
+ * @param {Object} ctx @param {Object} view @param {Array<Object>} [verifiedReport]
  * @returns {Promise<{report:Array<Object>, orphans:number}>}
  */
-async function killLegs(ctx, view) {
+async function killLegs(ctx, view, verifiedReport = []) {
   const report = [];
   let orphans = 0;
   const stateLegs = (view.state && view.state.legs) || {};
@@ -87,6 +87,13 @@ async function killLegs(ctx, view) {
   for (const legId of Object.keys(stateLegs)) {
     const sl = stateLegs[legId] || {};
     if (!sl.pid || (sl.state !== 'running' && sl.state !== 'pending')) continue;
+    const proven = verifiedReport.find(k => (k.leg || k.leg_id) === legId &&
+      k.pid === sl.pid && k.verified_dead === true && !k.refused);
+    if (proven) {
+      report.push({ leg_id: legId, pid: sl.pid, verified_dead: true,
+        tree_kill_exit: proven.tree_kill_exit == null ? null : proven.tree_kill_exit, refused: null });
+      continue;
+    }
     const plan = plans.find((p) => p.leg_id === legId) || {};
     const v = await procwin.verifyLeaf(ctx, sl.pid, {
       expectedImage: plan.expected_image,
@@ -495,10 +502,15 @@ async function cancelJobImpl(ctx, jobId, o) {
     });
   }
 
-  /* 5. the leaves, each identity-checked the same way. */
+  /* 5. Reuse only explicit death proofs for the same leg and pid. The runner may
+   * have finished during step 4's identity probe, so read its report again now.
+   * Keep the pre-escalation targets: newer terminal leg states are not death proofs. */
   let kills = { report: [], orphans: 0 };
   if (cascade) {
-    kills = await killLegs(ctx, view);
+    const latest = reload(ctx, jobId);
+    const payload = latest && (latest.result || latest.error);
+    const verifiedReport = payload && Array.isArray(payload.kill_report) ? payload.kill_report : [];
+    kills = await killLegs(ctx, view, verifiedReport);
     if (kills.orphans > 0) orphan = true;
     for (const k of kills.report) {
       if (k.refused) {
