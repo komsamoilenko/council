@@ -1,6 +1,6 @@
 // Isolated installed tree and fail-closed process/network interception; zero vendor quota.
 import fs from 'node:fs';
-import os from 'node:os';
+import {tempRoot} from '../temp-root.mjs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {createRequire} from 'node:module';
@@ -14,7 +14,8 @@ export function files(dir) {
 export function put(p, bytes) { fs.mkdirSync(path.dirname(p),{recursive:true}); fs.writeFileSync(p,bytes); return p; }
 export function json(p, value) { return put(p,JSON.stringify(value)); }
 export function fixture() {
-  const root=fs.mkdtempSync(path.join(os.tmpdir(),'council-trust-'));
+  const temporary=tempRoot('trust', 'council-trust-');
+  const root=temporary.root;
   const saved={...process.env}, restores=[];
   for(const k of Object.keys(process.env)) if(k.startsWith('COUNCIL_') || /^(GEMINI|GOOGLE|OPENAI|ANTHROPIC)_/.test(k)) delete process.env[k];
   for(const k of ['HOME','USERPROFILE','APPDATA','LOCALAPPDATA','XDG_CONFIG_HOME','XDG_DATA_HOME','XDG_STATE_HOME','CODEX_HOME','CLAUDE_CONFIG_DIR']) {
@@ -42,6 +43,6 @@ export function fixture() {
   json(manifest,{files:Object.fromEntries(files(app).map(p=>[path.relative(app,p).split(path.sep).join('/'),crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex')]))});
   return {root,app,dirs,vault,runtime,binaries,config,configPath,manifest,load,
     get spawns(){return spawns;},get networks(){return networks;},
-    close(){for(const restore of restores.reverse())restore(); for(const k of Object.keys(process.env))if(!(k in saved))delete process.env[k]; Object.assign(process.env,saved); for(const k of Object.keys(require.cache))if(k.startsWith(app+path.sep))delete require.cache[k]; fs.rmSync(root,{recursive:true,force:true});}
+    close(success=true){for(const restore of restores.reverse())restore(); for(const k of Object.keys(process.env))if(!(k in saved))delete process.env[k]; Object.assign(process.env,saved); for(const k of Object.keys(require.cache))if(k.startsWith(app+path.sep))delete require.cache[k]; temporary.finish(success);}
   };
 }

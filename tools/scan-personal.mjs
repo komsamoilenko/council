@@ -14,8 +14,9 @@ export function scan(root) {
   const hits=[]; let files=0,skipped=0;
   const inspect=(s,rel,part)=>{ for(const [index,re] of [...forbidden,userPath,opaque].entries()) {
     re.lastIndex=0;
+    let cursor=0,line=1;
     for(const m of s.matchAll(re)) {
-      const line=s.slice(0,m.index).split('\n').length;
+      while(cursor<m.index) { if(s.charCodeAt(cursor)===10)line++; cursor++; }
       hits.push({file:rel,line,rule:index,part});
     }
   } };

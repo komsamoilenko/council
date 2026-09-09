@@ -6,9 +6,10 @@ let passed=0,failed=0,skipped=0;
 const test=async (id,label,run,skip) => {
   if(skip){skipped++;console.log('SKIP '+id+' '+label+' — '+skip);return;}
   const f=fixture();
-  try {await run(f); if(f.networks)throw new Error('network attempts: '+f.networks); passed++;console.log('PASS '+id+' '+label);}
+  let success=false;
+  try {await run(f); if(f.networks)throw new Error('network attempts: '+f.networks); passed++;success=true;console.log('PASS '+id+' '+label);}
   catch(e){failed++;console.log('FAIL '+id+' '+label+' — '+e.message);}
-  finally{f.close();}
+  finally{f.close(success);}
 };
 if(!process.argv.includes('--lint-only'))await tests(test);
 await test('T-00','portability, templates, host registrations, platform exports',lint);
