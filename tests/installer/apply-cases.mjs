@@ -14,6 +14,7 @@ import {readJournal} from '../../installer/lib/journal.mjs';
 import {sha256} from '../../installer/lib/manifest.mjs';
 import {registrationMatches,registrationEdit} from '../../installer/lib/registration.mjs';
 import {appdirs} from '../../installer/lib/appdirs.mjs';
+import {assertHostTargetsOutsideProfile} from './sandbox-assertions.mjs';
 
 export async function applyCases(root,base) {
   let count=0,serial=0;
@@ -21,9 +22,12 @@ export async function applyCases(root,base) {
     const dir=path.join(root,'apply-'+serial++);fs.mkdirSync(dir);
     const env={...base.env};
     for(const k of ['HOME','USERPROFILE','APPDATA','LOCALAPPDATA','CODEX_HOME','CLAUDE_CONFIG_DIR','XDG_STATE_HOME']){env[k]=path.join(dir,k.toLowerCase());fs.mkdirSync(env[k]);}
+    if(env.COUNCIL_PLATFORM==='win32')for(const folder of ['Local','Roaming'])fs.mkdirSync(path.join(env.USERPROFILE,'AppData',folder),{recursive:true});
     const ctx=context({...base,env,dirs:undefined,platform:{...platform,implemented:{...platform.implemented,fileAttributes:false},restrictToOwner:async()=>({ok:false,reason:'backup_acl_not_restricted',reverted:true})},tier0:async()=> 'fixture Tier-0 pass',doctor:async()=>({fixture:true})});
     // context's overrides deliberately preserve an explicit dirs; use fresh layout.
     const {appdirs}=await import('../../installer/lib/appdirs.mjs');ctx.dirs=appdirs({env});
+    const hostTargets=assertHostTargetsOutsideProfile(ctx);
+    if(serial===1)process.stdout.write('HOST TARGETS OUTSIDE PROFILE '+JSON.stringify(hostTargets)+'\n');
     const vault=fixture(dir,name,ctx);
     if(name==='absent')fs.rmdirSync(vault);
     put(path.join(env.CLAUDE_CONFIG_DIR,'.claude.json'),'{\n  "canary": "untouched",\n  "mcpServers": {"neighbor": { "command": "keep" }}\n}\n');
@@ -48,6 +52,7 @@ export async function applyCases(root,base) {
     for(const w of plan.steps.flatMap(s=>s.writes))if(!w.transient && !w.directory && w.content!==undefined && !['S0','S1'].includes(plan.steps.find(s=>s.writes.includes(w)).id))assert.equal(after[w.path],Buffer.from(w.content).toString('base64'),'plan bytes: '+w.path);
     for(const w of plan.steps.flatMap(s=>s.writes))if(w.backup)assert.equal(after[w.backup],before[w.path],'backup canary: '+w.path);
   };
+  if(process.argv.includes('--verbs-only')) {const {verbCases}=await import('./verb-cases.mjs');await verbCases(make,tree);return;}
   for(const name of names) {
     const f=await make(name),before=tree(f.dir),order=[];
     const result=await apply(f.options,{...f.ctx,boundary:async s=>order.push(s)});
@@ -246,5 +251,6 @@ export async function applyCases(root,base) {
     const stamp=path.basename(f.plan.file,'.json'),journal=path.join(f.ctx.dirs.journal,stamp+'.jsonl');put(journal,'broken\n');
     await assert.rejects(rollback({yes:true,journal:stamp},f.ctx),e=>e.exitCode===5&&e.code==='E-JOURNAL-OPEN');count++;
   }
+  const {verbCases}=await import('./verb-cases.mjs');await verbCases(make,tree);
   process.stdout.write('PASS apply/rollback ('+count+' checks)\n');
 }

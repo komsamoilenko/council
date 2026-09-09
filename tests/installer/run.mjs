@@ -31,6 +31,7 @@ if (process.argv.includes('--child')) {
   const {planReport}=await import('../../installer/lib/report.mjs');
   const {names,fixture,put}=await import('./fixtures.mjs');
   const {writeSplice}=await import('../../installer/lib/safewrite.mjs');
+  const {snapshot,assertUnchanged,assertHostTargetsOutsideProfile}=await import('./sandbox-assertions.mjs');
   const caseName=process.argv[process.argv.indexOf('--child')+1];
   let count=0;
   const test=async (label,fn) => { await fn(); count++; };
@@ -51,15 +52,9 @@ if (process.argv.includes('--child')) {
     throw new Error('Unapproved probe: '+file+' '+args.join(' '));
   };
   const ctx=context({env,probe,nodeVersion:'v24.11.1',now:()=>new Date(Date.UTC(2026,8,8,9,10,tick++)),attributes:async file=>path.basename(file)==='cloud.md'?{bits:0x1000}:null});
-  const snapshot=dir => {
-    const result={};
-    const walk=p=>{ for(const e of fs.readdirSync(p,{withFileTypes:true})) {const f=path.join(p,e.name),s=fs.lstatSync(f),rel=path.relative(dir,f); if(s.isSymbolicLink()) result[rel]={link:fs.readlinkSync(f),mtime:s.mtimeMs}; else if(s.isDirectory()){result[rel]={directory:true};walk(f);}else result[rel]={hash:sha256(fs.readFileSync(f)),mtime:s.mtimeMs};} };
-    walk(dir);return result;
-  };
+  assertHostTargetsOutsideProfile(ctx);
   const unchanged=(before,allowed=[])=>{
-    const after=snapshot(root);
-    for(const [p,v] of Object.entries(before)) assert.deepEqual(after[p],v,'existing path changed: '+p);
-    for(const p of Object.keys(after).filter(p=>!Object.hasOwn(before,p))) assert.ok(allowed.some(a=>p===a || after[p].directory && a.startsWith(p+path.sep)),'unexpected new path: '+p);
+    assertUnchanged(root,env.USERPROFILE,before,snapshot(root),allowed,ctx.dirs.id);
   };
   const invoke=async (argv,extra={})=>{let out='',err='';const code=await run(argv,{...ctx,...extra,stdout:t=>out+=t,stderr:t=>err+=t});return {code,out,err};};
   try {
@@ -106,6 +101,30 @@ if (process.argv.includes('--child')) {
     } else if(caseName==='behavior') {
       const vault=fixture(root,'empty',ctx);
       await test('preflight has already run',async()=>assert.equal(preflight(),root));
+      await test('profile allowlist admits OS rewrites and rejects every other change',async()=>{
+        const rel=p=>path.join('userprofile',...p.split('/'));
+        const check=(before,after,allowed=[],id='win32')=>assertUnchanged(root,env.USERPROFILE,before,after,allowed,id);
+        const old={hash:'before',mtime:1},changed={hash:'after',mtime:2};
+        for(const p of ['AppData/Local/Microsoft/Windows/PowerShell/StartupProfileData-NonInteractive','AppData/Roaming/system-cache']) {
+          const file=rel(p);check({}, {[file]:changed});check({[file]:old},{[file]:changed});
+          assert.throws(()=>check({}, {[file]:changed},[],'linux'),/unexpected profile-root change/);
+        }
+        for(const p of ['.claude.json','.codex/config.toml','.claude/settings.json','invented','AppData/Local-other/cache','AppData/Roaming-other/cache']) {
+          const file=rel(p),named=e=>e.message.includes(file);
+          assert.throws(()=>check({}, {[file]:changed},[file]),named);
+          assert.throws(()=>check({[file]:old},{[file]:changed}),named);
+          assert.throws(()=>check({[file]:old},{}),named);
+        }
+        for(const dir of ['vault','appdata','localappdata','claude_config_dir','codex_home','xdg_state_home']) {
+          const file=path.join(dir,'canary');
+          assert.throws(()=>check({[file]:old},{[file]:{...old,mtime:2}}),/existing path changed/);
+          assert.throws(()=>check({[file]:old},{[file]:{...old,hash:'changed'}}),/existing path changed/);
+          assert.throws(()=>check({}, {[file]:changed}),/unexpected new path/);
+          check({}, {[file]:changed},[file]);
+        }
+        for(const key of ['CLAUDE_CONFIG_DIR','CODEX_HOME','APPDATA'])
+          assert.throws(()=>assertHostTargetsOutsideProfile({...ctx,env:{...env,[key]:env.USERPROFILE}}),/installer host target resolves inside profile/);
+      });
       await test('force-unlock CLI recovers unknown stale guard and lock', async()=>{
         const file=ctx.dirs.lock, guard=file+'.council-tmp-claim';
         put(file,JSON.stringify({pid:42,createdMs:1}));
@@ -116,7 +135,8 @@ if (process.argv.includes('--child')) {
         assert.equal((await invoke(['unlock','--json'])).code,2);
       });
       await test('parser closed verbs and flags',async()=>{
-        for(const verb of ['verify','update','uninstall','install-prereqs','login','migrate','set-key']){const r=await invoke([verb,'--json']);assert.equal(r.code,2);assert.ok(r.out.includes('not in this build'));assert.ok(usage.includes(verb));}
+        for(const verb of ['install-prereqs','login','migrate','set-key']){const r=await invoke([verb,'--json']);assert.equal(r.code,2);assert.ok(r.out.includes('not in this build'));assert.ok(usage.includes(verb));}
+        for(const verb of ['verify','update','uninstall']){const r=await invoke([verb,'--json']);assert.equal(r.code,4);assert.equal(JSON.parse(r.out).reason,'E-NO-MANIFEST');assert.ok(usage.includes(verb));}
         for(const verb of ['apply','rollback'])assert.equal((await invoke([verb,'--json'])).code,2);
         for(const args of [['bogus'],['detect','--bad'],['plan','--vault'],['detect','--profile','../bad'],['new-task','../bad','--vault',vault]]) assert.equal((await invoke(args)).code,2);
         assert.equal(parse(['--profile','custom','detect']).options.profile,'custom');
@@ -202,12 +222,12 @@ if (process.argv.includes('--child')) {
         const q=await invoke(['detect','--vault',vault,'--json'],{nodeVersion:'v18.0.0'});assert.equal(q.code,2);
         const b=snapshot(root);assert.equal((await invoke(['plan','--vault',vault,'--json'])).code,5);unchanged(b);
       });
-      await test('actual entry-point process rejects future verbs in sandbox',async()=>{
-        const r=spawnSync(node,[path.join(repo,'installer','setup.mjs'),'verify','--json'],{env:process.env,encoding:'utf8',windowsHide:true});assert.equal(r.status,2);assert.ok(JSON.parse(r.stdout).error.detail.includes('not in this build'));
+      await test('actual verify entry point refuses a missing manifest in sandbox',async()=>{
+        const r=spawnSync(node,[path.join(repo,'installer','setup.mjs'),'verify','--json'],{env:process.env,encoding:'utf8',windowsHide:true});assert.equal(r.status,4);assert.equal(JSON.parse(r.stdout).reason,'E-NO-MANIFEST');
       });
       await test('all closed exit codes have exercised producers',async()=>{
         for(const [code,wanted] of [['E-STEP',1],['E-USAGE',2],['E-PLAN-STALE',3],['E-MARKER-DUPLICATE',4],['E-JOURNAL-OPEN',5],['E-PLATFORM',6],['E-VERIFY-SLOW',7]]) assert.equal(errorObject(fail(code)).exitCode,wanted);
-        // Code 3 is reachable in the shared publication guard; verify's 7 is catalogue-only until task 08.
+        // Code 3 is reached here; the verb cases also exercise verify's drift exit 7.
         const file=path.join(root,'stale'),backup=path.join(root,'stale-backup');put(file,'changed');put(backup,'old');await assert.rejects(writeSplice(file,Buffer.from('old'),{bytes:Buffer.from('new'),oldRange:{start:0,end:3},newRange:{start:0,end:3}},{dryRun:false,backup}),e=>e.exitCode===3);
         assert.ok(Object.values(ERROR_CATALOGUE).every(row=>row[0]>=0&&row[0]<=7));
       });
@@ -244,7 +264,7 @@ if (process.argv.includes('--child')) {
   const invalid=spawnSync(process.execPath,[self,'--child','empty'],{env:{...process.env,COUNCIL_TEST_ROOT:''},encoding:'utf8',windowsHide:true});
   if(invalid.status===2 && invalid.stderr.includes('REFUSED: installer child is not sandboxed')){passed++;process.stdout.write('PASS sandbox pre-flight refusal\n');}else{failed++;process.stdout.write('FAIL sandbox pre-flight refusal\n');}
   const cases=process.argv.includes('--exercise-failure-cleanup')?[['cleanup-failure','win32']]:process.argv.includes('--report')?[['obsidian-like','win32']]:[...names.map(n=>[n,'win32']),['behavior','win32'],['duplicate-caps','win32'],['platform','linux'],['platform','darwin']];
-  if(process.argv.includes('--apply-only'))cases.splice(0,cases.length);
+  if(process.argv.includes('--apply-only')||process.argv.includes('--verbs-only'))cases.splice(0,cases.length);
   if(!process.argv.includes('--exercise-failure-cleanup'))cases.push(['apply','win32']);
   for(const [name,platform] of cases) {
     const root=fs.mkdtempSync(path.join(tempBase,'installer-'));
@@ -254,9 +274,10 @@ if (process.argv.includes('--child')) {
     if(process.argv.includes('--report'))env.COUNCIL_PRINT_REPORT='1';
     for(const key of envKeys)env[key]=['TEMP','TMP','TMPDIR'].includes(key)?root:path.join(root,key.toLowerCase());
     for(const key of envKeys)fs.mkdirSync(env[key],{recursive:true});
+    if(platform==='win32')for(const folder of ['Local','Roaming'])fs.mkdirSync(path.join(env.USERPROFILE,'AppData',folder),{recursive:true});
     // Remove inherited differently-cased PATH entries on Windows.
     for(const key of Object.keys(env))if(key.toUpperCase()==='PATH'&&key!=='PATH')delete env[key];
-    const r=spawnSync(process.execPath,[self,'--child',name],{env,encoding:'utf8',windowsHide:true,timeout:900000,maxBuffer:16*1024**2, ...(name==='apply'?{stdio:'inherit'}:{})});process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');success=r.status===0;if(success)passed++;else failed++;}
+    const r=spawnSync(process.execPath,[self,'--child',name,...(process.argv.includes('--verbs-only')?['--verbs-only']:[])],{env,encoding:'utf8',windowsHide:true,timeout:900000,maxBuffer:16*1024**2, ...(name==='apply'?{stdio:'inherit'}:{})});process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');success=r.status===0;if(success)passed++;else failed++;}
     finally {if(!inside(root,tempBase))throw new Error('unsafe cleanup');if(success)fs.rmSync(root,{recursive:true,force:true});else process.stdout.write('Failed installer case: '+root+'\n');}
   }
   const statusFile=path.join(diagnostics.root,'brief16-status.txt');

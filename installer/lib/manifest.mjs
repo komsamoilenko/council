@@ -29,7 +29,7 @@ export function validateManifest(m) {
   for (const e of m.entries) {
     need(object(e) && string(e.path) && ['file','dir','block'].includes(e.kind), 'entry'); removalFor(e);
     if (e.kind === 'block') {
-      need(string(e.block_id) && e.contract_version === 1 && hash(e.block_sha256_eolnorm), 'block');
+      need(string(e.block_id) && Number.isSafeInteger(e.contract_version) && e.contract_version >= 1 && hash(e.block_sha256_eolnorm), 'block');
       need(typeof e.pre_existing === 'boolean' && typeof e.adopted === 'boolean' && (e.backup === null || string(e.backup)), 'block_origin');
     } else need(typeof e.created === 'boolean', 'created');
     if (e.kind === 'file' && e.removal !== 'never_while_profile_exists' && e.removal !== 'never') need(hash(e.sha256), 'sha256');

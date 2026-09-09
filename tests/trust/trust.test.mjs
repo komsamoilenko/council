@@ -98,7 +98,7 @@ export default async function(test){
     const report=await uninstall({manifest,profile:'default'});
     assert.ok(report.skipped.some(x=>x.path===path.dirname(documents)&&x.reason==='out_of_scope'));
     assert.equal(fs.readFileSync(documents,'utf8'),'user content');
-  },'requires uninstall (task 11)');
+  });
   await test('T-47','runtime, vault and layout zone crossings refused',async f=>{
     const guard=f.load('lib/guard.js'),profile=f.load('lib/profile.js');const base=profile.resolve();assert.equal(guard.checkConfigTrust(base).ok,true);
     const check=config=>guard.checkConfigTrust({...base,config});
@@ -128,5 +128,5 @@ export default async function(test){
     const platform={...f.load('platform'),restrictToOwner:async()=>({ok:false,reason:'backup_acl_not_restricted'})};
     const {verify}=await import('../../installer/lib/verify.mjs');
     assert.match(JSON.stringify(await verify({profile:'default'},{platform})),/backup_acl_not_restricted/);
-  },'requires verify (next task)');
+  });
 }

@@ -31,7 +31,7 @@ const CONFIG_JSON = fixture.configPath;
 const TMP = fixture.tmp;
 const paths = require('../../src/lib/paths.js');
 const jobstore = require('../../src/lib/jobstore.js');
-process.env.COUNCIL_LEDGER_PREFIX = 'smoke-';
+process.env.COUNCIL_LEDGER_PREFIX = fixture.ledgerPrefix;
 process.env.COUNCIL_SMOKE_RUN = '1';
 delete process.env.COUNCIL_HOST;
 process.env.COUNCIL_CONFIG = CONFIG_JSON;
@@ -88,7 +88,7 @@ class Server {
   static async start(extraEnv, label) {
     const env = Object.assign({}, process.env, {
       COUNCIL_HOST: 'smoke',
-      COUNCIL_LEDGER_PREFIX: 'smoke-',       // keep test legs out of the real ledger and the real caps
+        COUNCIL_LEDGER_PREFIX: fixture.ledgerPrefix, // isolate test legs from real caps
       COUNCIL_TEST_MIN_TIMEOUT_S: '5',
       COUNCIL_MAX_PER_HOUR: '500',
       COUNCIL_MAX_PER_DAY: '2000',
@@ -381,7 +381,7 @@ function bootCtx() {
   const prevHost = process.env.COUNCIL_HOST;
   const prevPrefix = process.env.COUNCIL_LEDGER_PREFIX;
   process.env.COUNCIL_HOST = 'smoke';
-  process.env.COUNCIL_LEDGER_PREFIX = 'smoke-';   // must match Server.start so P points at the same files
+  process.env.COUNCIL_LEDGER_PREFIX = fixture.ledgerPrefix; // match Server.start
   const ctx = srv.boot();
   if (prevHost === undefined) delete process.env.COUNCIL_HOST; else process.env.COUNCIL_HOST = prevHost;
   if (prevPrefix === undefined) delete process.env.COUNCIL_LEDGER_PREFIX; else process.env.COUNCIL_LEDGER_PREFIX = prevPrefix;

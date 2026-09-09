@@ -8,6 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 export function makeProfile(repo, platform, appSource = path.join(repo,'src')) {
+  const verifying=process.argv.includes('--verify-profile');
   const explicitRg = process.env.COUNCIL_SMOKE_RG;
   const originalNpm = process.env.APPDATA && path.join(process.env.APPDATA, 'npm', 'node_modules');
   profileRoot = tempRoot('tier0', 'council-smoke-');
@@ -37,7 +38,7 @@ export function makeProfile(repo, platform, appSource = path.join(repo,'src')) {
   if (rg) { binaries.rg = path.join(app, platform.expectedImage('rg')); fs.copyFileSync(rg, binaries.rg); }
   const template = JSON.parse(fs.readFileSync(path.join(repo, 'installer', 'templates', 'profile', 'config.template.json'), 'utf8'));
   const config = {...template, profile:'default', vault,
-    runtime_root:path.join(dirs.run, '_smoke-' + process.pid), binaries,
+    runtime_root:path.join(dirs.run, (verifying?'_verify-':'_smoke-') + process.pid), binaries,
     layout:{work_dir:'work', jobs_dir:'work/jobs', ledger_dir:'ledger'},
     gemini:{provider:'agy'}, prompt_form:'split', created_at:new Date().toISOString(), server_name:'council', created_by:'smoke'};
   const configPath = put(path.join(dirs.etc, 'profiles', 'default', 'config.json'), JSON.stringify(config));
@@ -52,12 +53,12 @@ export function makeProfile(repo, platform, appSource = path.join(repo,'src')) {
     if (e.isDirectory()) walk(p); else files[path.relative(appSource,p).replaceAll('\\','/')] = crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
   } }
   walk(appSource);
-  put(path.join(dirs.etc, 'manifests', 'app-' + require('../../src/version.js').APP_VERSION + '.json'), JSON.stringify({files}));
+  put(path.join(dirs.etc, 'manifests', 'app-' + require(path.join(appSource,'version.js')).APP_VERSION + '.json'), JSON.stringify({files}));
   const ackPath = put(path.join(tmp, 'acknowledged-gate'), 'I have read NOTICE.md and I accept that using agy with council may breach Antigravity Additional Terms of Service section 6.\n');
-  return {tmp, configPath, ackPath, rg:!!rg};
+  return {tmp, configPath, ackPath, rg:!!rg,ledgerPrefix:verifying?'verify-':'smoke-'};
 }
 
 export function finishProfile(root, success) {
   if (root !== profileRoot?.root) throw new Error('unsafe_smoke_cleanup');
-  profileRoot.finish(success);
+  profileRoot.finish(success||process.argv.includes('--verify-profile'));
 }

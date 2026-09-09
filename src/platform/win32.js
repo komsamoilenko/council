@@ -468,6 +468,18 @@ function secretGet(name) { return dpapi(name,'unprotect',fs.readFileSync(secretP
 function secretSet(name,value) { const p = secretPath(name); const blob = dpapi(name,'protect',value); fs.mkdirSync(path.dirname(p),{recursive:true}); fs.writeFileSync(p,blob,{mode:0o600}); }
 function secretDelete(name) { const p = secretPath(name); try { fs.unlinkSync(p); } catch(e) { if(e.code !== 'ENOENT') throw e; } }
 module.exports = {
+  ownerAclState: (dir, env, invoke) => {
+    const sys=env.SYSTEMROOT||env.SystemRoot;if(!sys)return {ok:false,reason:'backup_acl_not_restricted'};
+    const command="$ErrorActionPreference='Stop'; $a=Get-Acl -LiteralPath "+psQuote(dir)+"; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $ok=$a.AreAccessRulesProtected; $own=$false; foreach($r in $a.Access){$s=$r.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value; if($r.AccessControlType -eq 'Allow'){if($s -notin @($sid,'S-1-5-18','S-1-5-32-544')){$ok=$false}; if($s -eq $sid -and ($r.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -eq [Security.AccessControl.FileSystemRights]::FullControl){$own=$true}}}; if($ok -and $own){'restricted'}else{'not_restricted'}";
+    const r=invoke(path.join(sys,'System32','WindowsPowerShell','v1.0','powershell.exe'),['-NoProfile','-NonInteractive','-Command',command]);
+    return {ok:r.status===0&&r.stdout.trim()==='restricted',reason:'backup_acl_not_restricted'};
+  },
+  commandLines: (env, invoke) => {
+    const sys=env.SYSTEMROOT||env.SystemRoot;if(!sys)return null;
+    const r=invoke(path.join(sys,'System32','WindowsPowerShell','v1.0','powershell.exe'),['-NoProfile','-NonInteractive','-Command',"$ErrorActionPreference='Stop'; @(Get-CimInstance Win32_Process | Select-Object -ExpandProperty CommandLine) | ConvertTo-Json -Compress"]);
+    if(r.status!==0)return null;
+    try{const lines=JSON.parse(r.stdout);return Array.isArray(lines)&&lines.every(s=>typeof s==='string')?lines:null;}catch{return null;}
+  },
   processNameProbe: (name, env = process.env) => {
     if (!/^[a-z]+$/.test(name)) throw new Error('invalid_process_name');
     const sys = env.SYSTEMROOT || env.SystemRoot;

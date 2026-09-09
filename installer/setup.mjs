@@ -13,10 +13,16 @@ import { safewrite } from './lib/safewrite.mjs';
 import { forceUnlock } from './lib/lock.mjs';
 import { apply, applyReport } from './lib/apply.mjs';
 import { rollback } from './lib/rollback.mjs';
+import { verify } from './lib/verify.mjs';
+import { uninstall } from './lib/uninstall.mjs';
+import { update } from './lib/update.mjs';
 
 const verbs = ['detect','plan','apply','verify','update','uninstall','install-prereqs','login','migrate','rollback','set-key','duplicates','new-task','unlock'];
 const globalValues = ['profile','log'], globalSwitches = ['json','no-color','verbose'];
 const flags = {
+  verify: { values:[], switches:['fast','full','hosts'] },
+  uninstall: { values:[], switches:['all','keep-app','keep-vault','purge-runtime','purge-backups','yes'] },
+  update: { values:['channel','ref','keep'], switches:['check','prune-versions'] },
   apply: { values:['plan'], switches:['yes','resume','dry-run','no-register','adopt-existing'] },
   rollback: { values:['journal'], switches:['yes'] },
   unlock: { values:[], switches:['force-unlock'] },
@@ -27,7 +33,7 @@ const flags = {
 };
 export const usage = `Usage: node installer/setup.mjs <verb> [flags]
 Verbs: ${verbs.join(' ')}
-Implemented: detect plan apply rollback duplicates new-task unlock. Other verbs are not in this build.
+Implemented: detect plan apply verify update uninstall rollback duplicates new-task unlock. Other verbs are not in this build.
 Global: --profile <id> --json --no-color --verbose --log <file>
 detect: --vault <path> --duplicates --out <file>
 plan: --vault <path> --merge block|sidecar|none|ask --conventions --relocate-runtime
@@ -55,6 +61,7 @@ export function parse(argv) {
     if (!arg.startsWith('--')) { positional.push(arg); continue; }
     const key = arg.slice(2);
     if (Object.hasOwn(options,key)) throw fail('E-USAGE','Repeated flag: '+arg);
+    if(verb==='update'&&key==='rollback'){options.rollback=argv[i+1]&&!argv[i+1].startsWith('--')?argv[++i]:true;continue;}
     if (switches.has(key)) options[key] = true;
     else if (values.has(key) && argv[i+1] !== undefined && !argv[i+1].startsWith('--')) options[key] = argv[++i];
     else throw fail('E-USAGE','Unknown flag or missing value: '+arg);
@@ -74,6 +81,11 @@ export async function run(argv, overrides = {}) {
     options = {...loadAnswers(command.options.answers),...command.options};
     const ctx = context({...overrides,profile:options.profile || 'default'});
     let result, human, exitCode = 0;
+    if(['verify','uninstall','update'].includes(command.verb)) {
+      result=await ({verify,uninstall,update}[command.verb])(options,ctx);
+      stdout(JSON.stringify(result, null, options.json?undefined:2)+'\n');
+      return result.exitCode||0;
+    }
     if (command.verb === 'apply' || command.verb === 'rollback') {
       result = command.verb === 'apply' ? await apply(options,ctx) : await rollback(options,ctx);
       human = command.verb === 'apply' ? applyReport(result) : JSON.stringify(result,null,2)+'\n';

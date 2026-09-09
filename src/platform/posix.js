@@ -14,6 +14,8 @@ module.exports = function make(id) {
   const fail = c => () => { throw new PlatformNotImplemented(c); };
   const asyncFail = c => async () => { throw new PlatformNotImplemented(c); };
   return {
+    ownerAclState: dir => {try{return {ok:(fs.statSync(dir).mode&0o077)===0,reason:'backup_acl_not_restricted'};}catch{return {ok:false,reason:'backup_acl_not_restricted'};}},
+    commandLines: () => null,
     executableNames: name => [name],
     vendorBinary: (name, {npmRoot} = {}) => name === 'codex' && npmRoot ? path.join(npmRoot,'@openai','codex','bin','codex.js') : null,
     desktopCliLayout: () => null,

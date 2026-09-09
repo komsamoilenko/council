@@ -56,7 +56,7 @@ export async function validatePlan(plan,ctx) {
 export async function tier0(ctx) {
   return new Promise((resolve,reject)=>{
     const env={...ctx.env,COUNCIL_SMOKE_TMP:os.tmpdir()};
-    const child=spawn(ctx.node,[path.join(repo,'tests','tier0','smoke.mjs'),'--fast','--app',ctx.dirs.app],{env,cwd:repo,shell:false,windowsHide:true,stdio:['ignore','pipe','pipe']});
+    const child=spawn(ctx.node,[path.join(repo,'tests','tier0','smoke.mjs'),...(!ctx.full?['--fast']:[]),...(ctx.verifyMode?['--verify-profile']:[]),'--app',ctx.dirs.app],{env,cwd:repo,shell:false,windowsHide:true,stdio:['ignore','pipe','pipe']});
     let output='';child.stdout.on('data',d=>output+=d);child.stderr.on('data',d=>output+=d);
     child.on('error',reject);child.on('exit',code=>code===0?resolve(output):reject(Object.assign(new Error('S7 failed\n'+output),{exitCode:1})));
   });
