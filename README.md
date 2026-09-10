@@ -1,95 +1,179 @@
-<!-- Owns readme documentation; specification §§2–6,14. -->
 # council
 
-One MCP server that lets the AI assistant you are already talking to consult a **different vendor's** assistant, under your own subscriptions, and record what it cost.
+Council is a local MCP server that lets the assistant you are talking to consult
+another vendor's assistant through your own CLIs and Gemini API key. It runs
+consultations as durable background jobs, returns independently produced
+answers for you and your assistant to assess, and records usage in a local ledger.
 
-You ask Claude a question. Claude asks Codex the same question independently, notices where the two answers disagree, argues that specific point with it, and tells you what is settled, what is merely agreed, and what is still open. All of it from inside Claude Desktop, Claude Code, or the Codex app — whichever you happen to be using.
-
-> **Status: design complete, implementation in progress.** A working v1 runs on the author's machine (27 zero-quota tests green; one real consultation verified on each of three legs). This repository is being built from that v1 into something installable by other people. There is no release yet. See [Status](#status) below.
-
----
-
-## Why this exists
-
-Every assistant is confident. Two assistants from different vendors are confident *in different places*, and that is the useful signal. The problem is plumbing:
-
-- Claude Desktop can call a tool, but abandons it after **60 seconds** — measured, on both its Chat and Code tabs. A real consultation takes minutes.
-- The vendors' subscriptions are reachable only through their own CLIs. Automating their web interfaces breaks their terms and their anti-bot defences, and every project that tried has rotted.
-- Nothing tracks which of your accounts paid for what.
-
-council is the missing middle: an MCP server that starts the official CLIs as child processes, runs the long work as background jobs the host can poll, and keeps a ledger.
-
-## What it does
-
-- **Consult across vendors.** `council_start` fans a prompt to one, two or three legs; `council_poll` returns progress every 40 seconds, inside every host's timeout. A ten-minute consultation survives a host restart, because job state lives on disk.
-- **Debate, with a protocol that does not reward capitulation.** Independent answers first; a debate opens only when they diverge or the stakes are high. Two rounds, not five — more rounds measurably *decrease* accuracy ([arXiv:2502.19130](https://arxiv.org/abs/2502.19130)), and convergence happens independently of correctness ([arXiv:2606.03032](https://arxiv.org/abs/2606.03032)). A verdict is one of four named states, and "we agreed but checked nothing" is one of them, spelled out as such.
-- **Route by task class.** A short factual question does not need three frontier models at maximum reasoning effort. The router picks the legs, the models and the effort per class, deterministically, with no model call of its own.
-- **Account for it.** An append-only ledger records tokens, wall time, estimated cost and *which account paid*, per leg. `council_ledger` renders it.
-- **Refuse to run away.** Recursion depth, calls per hour and per day, concurrent jobs, per-job wall clock, a kill file, and a cancel that kills the whole process tree. An abandoned call stops burning quota instead of finishing into the void.
-- **Search your notes.** `council_search` is ripgrep over your vault; the reference filesystem MCP server has no content search at all.
-
-## What it is not
-
-Not a chat UI, not a hosted service, not an account switcher, not a way to use one subscription for several people. It ships no vendor code and holds no vendor login. See [NOTICE.md](NOTICE.md) — read it before you install anything.
-
-## How it works
-
+```text
+Claude Desktop / Claude Code / Codex app or extension
+  -> stable launcher -> stdio MCP server per host
+                          -> detached runner per job
+                               -> Claude / Codex / Gemini API / echo
+                          <- results on disk <- council_poll
 ```
-your host (Claude Desktop · Claude Code · Codex app or extension)
-  └─ stdio MCP server            one per host, stateless front end
-       └─ detached job runner    owns the deadline, heartbeat and the ledger row
-            └─ one leaf per leg  claude · codex · gemini
-```
-
-The host never waits more than 45 seconds for anything. Everything a tool answers with is read from disk, so a job started in one host is pollable from another.
-
-## The legs
-
-| Leg | How it runs | Whose quota |
-|---|---|---|
-| `claude` | the official Claude Code binary, `claude -p --output-format json`, in a scratch directory with `--safe-mode --restricted` | your Claude subscription or API key |
-| `codex` | the official Codex CLI, `codex exec --json --ignore-user-config` | your ChatGPT plan or OpenAI API key |
-| `gemini` | the Gemini API over HTTPS with your AI Studio or Vertex key — the path Google itself recommends for third-party agents | your Google API key |
-| `echo` | a local fake used by the whole test suite | nothing |
-
-An adapter for Google's Antigravity CLI exists in the source and **is disabled**, because Google's terms forbid third-party software from using it. It is not documented anywhere but [NOTICE.md](NOTICE.md), which explains why you should leave it alone.
 
 ## Status
 
-| | |
+Version 0.1.0 implements eight tools, the complete installer command set,
+three host registrations, multiple profiles, journalled recovery, git/zip
+updates and manifest-based uninstall. Windows is implemented. macOS/Linux
+ship stubs: diagnostics and permitted reads work, but starting consultations,
+active polling and cancellation require implemented process supervision.
+Terminal results remain readable. See [CHANGELOG](CHANGELOG.md).
+
+## What it is not
+
+Council is not a hosted service, chat UI, account switcher or shared-subscription
+service. It ships no vendor CLI and does not automate vendor login. An agreement
+between assistants is not proof: check the shared claim before calling it
+verified. Read [NOTICE](NOTICE.md) before using third-party services.
+
+## Requirements
+
+Windows, Node 20.11 or newer, and the vendor CLI/account or Gemini key for the
+legs you use. Node 24 is the tested path; the launcher on the older enforced
+floor remains unverified. Ripgrep is required for search. Echo requires no
+vendor account. [VERSIONS](docs/VERSIONS.md) lists actual capability checks.
+`install-prereqs` offers attended Node/Claude Code/Codex installation after
+Node is available to run the setup wrapper.
+
+## Install
+
+From an extracted release or checkout outside your vault:
+
+```text
+bin\council-setup.cmd detect --vault "C:\Users\<you>\Vault"
+bin\council-setup.cmd plan --vault "C:\Users\<you>\Vault"
+bin\council-setup.cmd apply --plan "<file printed by plan>"
+bin\council-setup.cmd verify
+bin\council-setup.cmd login
+```
+
+Review the plan and confirm apply in your terminal. Apply downloads nothing.
+Fully quit and restart Claude Desktop after registration and add the supplied
+project instructions. For Gemini, follow with `bin\council-setup.cmd set-key`:
+hidden input is validated and stored under the profile's DPAPI-protected
+runtime secrets directory. See [INSTALL](docs/INSTALL.md) for writes, exit
+codes, login guidance and regional billing information via [NOTICE](NOTICE.md).
+
+## Your vault
+
+Council adopts your folder in place. It adds a path-free `.council/vault.json`
+contract, missing rules files or marked rule blocks, and work directories.
+Optional conventions add inbox/shared/output/index files. Jobs and ledger
+default to the vault and can be relocated. It never moves existing notes,
+reorders your index, deletes duplicates or installs executable code in the vault.
+Existing files are backed up whole outside the vault before edits; conflicting
+user edits are kept. See [VAULT-CONTRACT](docs/VAULT-CONTRACT.md).
+
+## Where things live
+
+| Zone | Example | Purpose |
+|---|---|---|
+| Z0 | `C:\Users\<you>\AppData\Local\council\app\0.1.0` and sibling `bin` | Installed runtime and stable launcher |
+| Z1 | `C:\Users\<you>\AppData\Local\council\etc` | Machine/profile config, manifests, journal and backups |
+| Z2 | `C:\Users\<you>\AppData\Local\council\run\default` | Scratch, secrets, and jobs/ledger when relocated |
+| Z3 | `C:\Users\<you>\Vault` | Your notes, rules, tasks and default jobs/ledger |
+
+Use `--profile <id>` consistently for several vaults. Profiles share the
+installed application and shared skill; each owns its configuration and
+runtime. Keep Z0/Z1 outside agent write grants. See [CONFIG](docs/CONFIG.md).
+
+## The eight tools
+
+| Tool | Purpose |
 |---|---|
-| Design | complete — repository, installer, migration and test plan specified and adversarially reviewed |
-| Runtime (v1) | working privately: 27 zero-quota tests green, one real call verified per leg, running in three hosts on one machine |
-| This repository | runtime, read-only planning, apply, host registration and rollback implemented; verify, update and uninstall remain pending |
-| Platforms | Windows implemented; macOS and Linux are designed for and stubbed, not written |
-| Release | none yet. No tags, no npm package, nothing to install |
+| `council_start` | Start one consultation or a fan-out |
+| `council_poll` | Wait for progress or read results; default wait 40 seconds, maximum 45 |
+| `council_ask` | Single-leg blocking convenience; degrades to a job ID when its host window ends |
+| `council_cancel` | Cancel a job and its process tree |
+| `council_list` | Find recent jobs across hosts |
+| `council_search` | Ripgrep content search inside your vault |
+| `council_doctor` | Zero-quota diagnostics and optional version probes |
+| `council_ledger` | Inspect local usage, estimates and refusals |
 
-Watch [CHANGELOG.md](CHANGELOG.md). When there is something to install, it will say so there first.
+Arguments, result shapes, paging and untrusted-output framing are in
+[INTERFACES](docs/INTERFACES.md). Long consultations should use start/poll.
 
-## Planned installation
+## The four legs
 
-Nothing here works yet; this is the shape it will take.
+| Leg | Execution | Usage |
+|---|---|---|
+| Claude | Official Claude Code CLI in restricted scratch context | Your vendor account |
+| Codex | Official CLI with ignored user rules/config and read-only sandbox | Your vendor account |
+| Gemini API | Council-owned HTTPS child with your API key | Your API project |
+| Antigravity (`agy`) | **DISABLED** | See [NOTICE](NOTICE.md) |
 
-```
-council-setup detect     # report what is installed, signed in and registered. Writes nothing.
-  council-setup plan       # declare writes and save a plan outside the vault
-  council-setup apply --plan <saved-plan> --yes  # journalled and reversible
-council-setup verify     # run the zero-quota suite and council_doctor in every host
-council-setup uninstall  # unregister, and remove only what the manifest says we created
-```
+The additional `echo` backend is a local fake for zero-quota checks.
+Council charges no fee; vendor usage may cost money or consume quota.
+See [PRICING](docs/PRICING.md).
 
-The installer **adopts an existing folder in place**: it never moves, renames or deletes your files. A file it must extend gets a marked block and a dated backup; duplicates are reported, never removed. The code lives outside your notes folder, so nothing an agent can write inside the vault changes what council runs.
+## Safety
+
+The invariant is that nothing agent-writable changes what runs. Derived narrow
+executable roots, an argv guard, environment allowlisting, restricted/read-only
+CLI execution and app integrity checks enforce it within the documented write
+boundary. Untrusted configuration enters doctor-only mode. Leaf output is
+framed as untrusted, with a single final `NEXT:` line from the renderer.
+
+Shared hourly/daily/concurrency/depth fuses, deadlines and identity-checked
+cancellation bound jobs. STOP files exist in the vault, profile runtime and
+globally at `%LOCALAPPDATA%\council\STOP`. Whole-file backups cover edited
+files, including host configuration, while recovery preserves unrelated host
+entries. Removal follows manifest ownership; runtime/backup purges require
+their own attended per-item decisions. Transient cleanup and explicit key
+deletion have narrow scopes. This does not protect Z0/Z1 from a process granted
+unrestricted access to your OS account. See [SECURITY-MODEL](docs/SECURITY-MODEL.md).
+
+Use installer `update` and `uninstall` for lifecycle changes and read their
+plans/reports. [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) covers host restart,
+shim, proxy and sign-in issues. `node tests/run.mjs` runs the local zero-quota
+gate; [TESTING](docs/TESTING.md) explains fixture isolation and skips.
+
+## Not in 0.1.0
+
+The following are deferred:
+
+- macOS/Linux process, secrets and file-attribute implementations (planned for v0.2).
+- npm publication and GitHub Actions beyond lint.
+- Gemini multi-turn resume and a GUI.
+- Router or debate-protocol changes.
+- Measured minimum versions for Codex and Antigravity; the latter remains disabled, see [NOTICE](NOTICE.md).
+- Claude Code project-scope registration and MSIX Claude Desktop as a first-class write target.
+- Signed releases and pinned-binary-hash mode.
+- Automatic translation of the rules block.
 
 ## Documentation
 
-- [NOTICE.md](NOTICE.md) — vendor terms, what council holds and what it never touches. Read first.
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the process model, trust zones and the decisions that look odd until explained.
-- [SECURITY.md](SECURITY.md) — threat model and how to report a problem.
-- [CONTRIBUTING.md](CONTRIBUTING.md) — how the repository is organised and what a change must not break.
+- [ARCHITECTURE](docs/ARCHITECTURE.md) — process model, zones and launcher rationale.
+- [INSTALL](docs/INSTALL.md) — attended installation, writes and recovery.
+- [CONFIG](docs/CONFIG.md) — machine/profile configuration, tokens and layout.
+- [VAULT-CONTRACT](docs/VAULT-CONTRACT.md) — adoption, markers and conditional conventions.
+- [PLATFORMS](docs/PLATFORMS.md) — platform capabilities and credential existence probes.
+- [TESTING](docs/TESTING.md) — isolated zero-quota tests and explicit skips.
+- [RELEASING](docs/RELEASING.md) — tracked-tree staging, tags and release assets.
+- [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) — diagnostic reasons and host fixes.
+- [MIGRATION](docs/MIGRATION.md) — generic transition from an older in-vault install.
+- [SECURITY-MODEL](docs/SECURITY-MODEL.md) — trust boundaries, controls and residual risks.
+- [VERSIONS](docs/VERSIONS.md) — enforced floors, tested versions and capability probes.
+- [PRICING](docs/PRICING.md) — vendor usage, fuses and ledger interpretation.
+- [SPEC](docs/SPEC.md) — condensed normative contract for contributors.
+- [INTERFACES](docs/INTERFACES.md) — eight MCP tools and all installer commands.
+- [cancel-timing](docs/cancel-timing.md) — cancellation timing fields and interpretation.
+- [INSTALLER-AUDIT-FIXES](docs/INSTALLER-AUDIT-FIXES.md) — installer audit decisions and fixes.
+- [INSTALLER-READ-ONLY-DECISIONS](docs/INSTALLER-READ-ONLY-DECISIONS.md) — read-only installer decisions.
+- [INSTALLER-VERBS](docs/INSTALLER-VERBS.md) — verification, update and uninstall details.
+- [Release notes 0.1.0](docs/release-notes/0.1.0.md) — shipped scope and deferrals.
+
+Also read [NOTICE](NOTICE.md), [SECURITY](SECURITY.md) and
+[CONTRIBUTING](CONTRIBUTING.md).
 
 ## Acknowledgements
 
-The three-stage council shape — independent answers, cross-examination, a chairman — follows Andrej Karpathy's [llm-council](https://github.com/karpathy/llm-council). The protocol's stopping rules come from the multi-agent-debate literature rather than from intuition; the papers are cited where the rules are stated.
+The independent-answer, cross-examination and chair structure draws on the
+open-source llm-council project. Council uses the official vendor CLIs and
+ripgrep; vendor software is installed separately and retains its own terms.
 
 ## License
 
