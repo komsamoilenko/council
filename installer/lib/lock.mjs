@@ -6,7 +6,7 @@ import platform from '../../src/platform/index.js';
 import { safewrite } from './safewrite.mjs';
 
 export const STALE_MS = 30 * 60 * 1000;
-const refused = (reason, file, owner, escape) => ({ ok: false, code: 'E_SETUP_LOCKED', exitCode: 5,
+const refused = (reason, file, owner, escape) => ({ ok: false, code: 'E-SETUP-LOCKED', exitCode: 5,
   reason, path: file, owner, ...(escape ? { escape: '--force-unlock' } : {}),
   message: reason + ': ' + file + '. Recovery path: ' + file });
 const settings = options => ({ now: Date.now, pid: process.pid, platform, ...options });

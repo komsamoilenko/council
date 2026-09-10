@@ -61,7 +61,9 @@ codes, login guidance and regional billing information via [NOTICE](NOTICE.md).
 
 Council adopts your folder in place. It adds a path-free `.council/vault.json`
 contract, missing rules files or marked rule blocks, and work directories.
-Optional conventions add inbox/shared/output/index files. Jobs and ledger
+Conventions add inbox/shared/output/index files by default for a fresh or
+empty vault; answers-file `conventions:false` disables them, and
+`--conventions` enables them on an existing vault. Jobs and ledger
 default to the vault and can be relocated. It never moves existing notes,
 reorders your index, deletes duplicates or installs executable code in the vault.
 Existing files are backed up whole outside the vault before edits; conflicting
@@ -103,7 +105,7 @@ Arguments, result shapes, paging and untrusted-output framing are in
 | Claude | Official Claude Code CLI in restricted scratch context | Your vendor account |
 | Codex | Official CLI with ignored user rules/config and read-only sandbox | Your vendor account |
 | Gemini API | Council-owned HTTPS child with your API key | Your API project |
-| Antigravity (`agy`) | **DISABLED** | See [NOTICE](NOTICE.md) |
+| Antigravity (`agy`) | **DISABLED BY DEFAULT** | See [NOTICE](NOTICE.md) |
 
 The additional `echo` backend is a local fake for zero-quota checks.
 Council charges no fee; vendor usage may cost money or consume quota.
@@ -114,12 +116,16 @@ See [PRICING](docs/PRICING.md).
 The invariant is that nothing agent-writable changes what runs. Derived narrow
 executable roots, an argv guard, environment allowlisting, restricted/read-only
 CLI execution and app integrity checks enforce it within the documented write
-boundary. Untrusted configuration enters doctor-only mode. Leaf output is
+boundary. Before spawning, the runner compares backend-built argv and sandbox
+paths and revalidates read grants against the vault and runtime exclusions.
+Untrusted configuration enters doctor-only mode. Leaf output is
 framed as untrusted, with a single final `NEXT:` line from the renderer.
 
 Shared hourly/daily/concurrency/depth fuses, deadlines and identity-checked
 cancellation bound jobs. STOP files exist in the vault, profile runtime and
-globally at `%LOCALAPPDATA%\council\STOP`. Whole-file backups cover edited
+globally at `%LOCALAPPDATA%\council\STOP`; extra paths come from
+`COUNCIL_STOP_FILES`. Trusted `COUNCIL_MAX_*` environment settings can override
+fuse caps; host registrations cannot supply them. Whole-file backups cover edited
 files, including host configuration, while recovery preserves unrelated host
 entries. Removal follows manifest ownership; runtime/backup purges require
 their own attended per-item decisions. Transient cleanup and explicit key

@@ -27,6 +27,7 @@ const secrets = require('./lib/secrets');
 const redact = require('./lib/redact');
 const quota = require('./lib/quota.js');
 const fuses = require('./lib/fuses.js');
+const router = require('./lib/router.js');
 
 const BACKENDS = {
   claude: require('./backends/claude.js'),
@@ -178,6 +179,12 @@ class Job {
     try { guard.assertArgvSafe(spec.args, this.ctx.config); }
     catch (e) { leg.state = 'error'; leg.spawn_error = 'guard: ' + e.message; leg.ended_ms = Date.now(); this.rlog(leg.leg_id + ' refused by guard: ' + e.message); return; }
 
+    try { this.validateSpawn(spec, leg); }
+    catch (e) {
+      leg.state = 'error'; leg.spawn_error = 'spawn.json ' + e.message; leg.ended_ms = Date.now();
+      this.rlog(leg.leg_id + ' refused: ' + leg.spawn_error); return;
+    }
+
     const api = leg.backend === 'gemini' && ((this.ctx.config.gemini || {}).provider || 'api') === 'api';
     if (api && (!platform.sameFile(spec.file,this.ctx.config.binaries.node) || !platform.sameFile(spec.args[0],this.ctx.config.binaries.gemini_api_js) || spec.args.length !== 7 || spec.args[1] !== '--model' || spec.args[3] !== '--timeout-s' || spec.args[5] !== '--effort' || !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(spec.args[2]) || !['low','medium','high'].includes(spec.args[6]) || !Number.isFinite(Number(spec.args[4])) || Number(spec.args[4]) < 1 || Number(spec.args[4]) > 1800 || !platform.sameFile(spec.cwd,this.ctx.paths.sandboxFor('gemini')) || spec.promptVia !== 'stdin' || spec.stdinHeader !== 'gemini-api')) { leg.state='error';leg.spawn_error='api_spawn_rejected';leg.ended_ms=Date.now();return; }
     const env = envlib.childEnv({
@@ -245,6 +252,54 @@ class Job {
     } else {
       try { child.stdin.end(); } catch {}
     }
+  }
+
+  // Keep argv definitions in the adapters. Rebuild a comparison spec with trusted
+  // paths and class-defined tools, then require every token and transport to match.
+  validateSpawn(spec, leg) {
+    const reject = (field, reason) => { throw new Error(field + ' rejected: ' + reason); };
+    const backend = Object.hasOwn(BACKENDS, leg.backend) && BACKENDS[leg.backend];
+    if (!backend) reject('args', 'unknown_backend');
+    if (!new RegExp('^' + leg.backend + '(?:-[1-9][0-9]*)?$').test(leg.leg_id)) reject('args', 'invalid_leg_id');
+    if (typeof spec.cwd !== 'string' || !platform.sameFile(spec.cwd, this.ctx.paths.sandboxFor(leg.backend)))
+      reject('cwd', 'backend_sandbox_mismatch');
+    if (!Array.isArray(spec.args) || spec.args.some(a => typeof a !== 'string')) reject('args', 'backend_shape_mismatch');
+    const readPaths = [];
+    const runtimeRoots = [this.ctx.paths.runtimeRoot, ...((this.ctx.config._machine || {}).profileRuntimeRoots || [])].filter(Boolean);
+    for (let i = 0; i < spec.args.length; i++) {
+      if (spec.args[i] !== '--add-dir') continue;
+      const start = ++i;
+      for (; i < spec.args.length && !spec.args[i].startsWith('-'); i++) {
+        const grant = paths.resolveVaultPath(spec.args[i], this.ctx.paths);
+        if (!grant.ok) reject('read grant', grant.reason);
+        if (runtimeRoots.some(root => {
+          const real = paths.realpathSafe(root) || root;
+          return paths.isUnder(grant.path, real) || paths.isUnder(real, grant.path);
+        })) reject('read grant', 'runtime_root_not_grantable');
+        if (fs.statSync(grant.path).isFile() && fs.statSync(grant.path).size > 50 * 1024 * 1024)
+          reject('read grant', 'vault_unavailable');
+        readPaths.push(grant.path);
+        if (leg.backend !== 'claude') { i++; break; }
+      }
+      if (i === start) reject('read grant', 'path_outside_vault');
+      i--;
+    }
+    const promptPath = leg.meta.prompt_swapped ? this.files.leg(leg.leg_id).prompt : this.files.prompt;
+    if (spec.prompt_path && !platform.sameFile(spec.prompt_path, promptPath)) reject('prompt path', 'job_prompt_mismatch');
+    const taskClass = router.CLASSES[this.request.router && this.request.router.task_class || 'general'];
+    if (!taskClass) reject('args', 'unknown_task_class');
+    if (leg.meta.model != null && !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(leg.meta.model)) reject('args', 'invalid_model');
+    let expected;
+    try { expected = backend.buildSpawn(this.ctx, {
+      job: this.request, leg: {...leg.meta, leg_id: leg.leg_id, tools: taskClass.tools},
+      promptPath: this.files.prompt, promptText: this.promptFor({prompt_path: promptPath}),
+      effort: leg.meta.effort, model: leg.meta.model, readPaths,
+      continueFrom: leg.meta.session_id || null, budgetUsd: this.request.max_cost_usd, timeoutS: this.request.timeout_s,
+    }); } catch (e) { reject('args', e.message); }
+    if (!platform.sameFile(spec.file, expected.file) || JSON.stringify(spec.args) !== JSON.stringify(expected.args))
+      reject('args', 'backend_shape_mismatch');
+    if (spec.promptVia !== expected.promptVia || (spec.stdinHeader || null) !== (expected.stdinHeader || null))
+      reject('prompt transport', 'backend_shape_mismatch');
   }
 
   /**

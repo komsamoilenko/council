@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import childProcess from 'node:child_process';
+import {EventEmitter} from 'node:events';
+import {PassThrough} from 'node:stream';
 import {files,put,json,repo} from './fixture.mjs';
 import acl from './win32-acl.test.mjs';
 import {validateManifest,sha256} from '../../installer/lib/manifest.mjs';
@@ -81,6 +84,60 @@ export default async function(test){
       const leg={leg_id:'codex',backend:'codex',meta:{}};job.spawnLeg(leg);
       assert.equal(leg.state,'error');assert.equal(leg.spawn_error,'spawn.json file rejected: '+want);assert.equal(f.spawns,0);
     }
+  });
+  await test('T-51','spawn-time cwd, grants and backend shape rechecked before any spawn',f=>{
+    const ctx=f.load('server.js').boot(),{Job}=f.load('runner.js'),store=f.load('lib/jobstore.js');
+    const dir=path.join(f.vault,'work','jobs','recheck'),out=store.jobFiles(dir);
+    const request={job_id:'recheck',timeout_s:180,max_cost_usd:0.2};
+    const job=new Job({ctx,jobDir:dir,files:out,request,spawnDoc:{},promptText:'sleep:0',rlog:()=>{}});
+    const codex=f.load('backends/codex.js').buildSpawn(ctx,{job:request,leg:{leg_id:'codex'},promptPath:out.prompt});
+    const outside=put(path.join(f.root,'outside','note.md'),'fixture');
+    fs.mkdirSync(ctx.paths.jobsRoot,{recursive:true});
+    const valid=put(path.join(f.vault,'notes','ok.md'),'fixture');
+    const otherRuntime=path.dirname(put(path.join(f.vault,'other-runtime','state'),'fixture'));
+    ctx.config._machine.profileRuntimeRoots.push(otherRuntime);
+    for(const [change,want] of [
+      [{cwd:f.vault},'spawn.json cwd rejected: backend_sandbox_mismatch'],
+      [{args:[...codex.args,'--add-dir',outside]},'spawn.json read grant rejected: path_outside_vault'],
+      [{args:[...codex.args,'--add-dir',ctx.paths.jobsRoot]},'spawn.json read grant rejected: path_outside_vault'],
+      [{args:[...codex.args,'--add-dir',f.runtime]},'spawn.json read grant rejected: path_outside_vault'],
+      [{args:[...codex.args,'--add-dir',otherRuntime]},'spawn.json read grant rejected: runtime_root_not_grantable'],
+      [{args:[...codex.args,'--add-dir',valid]},'spawn.json args rejected: backend_shape_mismatch'],
+      [{args:[...codex.args,'--unknown']},'spawn.json args rejected: backend_shape_mismatch'],
+      [{promptVia:'argv'},'spawn.json prompt transport rejected: backend_shape_mismatch'],
+    ]){
+      json(out.spawn,{legs:{codex:{...codex,...change}}});job.spawnDoc=store.readJSON(out.spawn);
+      const leg={leg_id:'codex',backend:'codex',meta:{}};job.spawnLeg(leg);
+      assert.equal(leg.state,'error');assert.equal(leg.spawn_error,want);assert.equal(f.spawns,0);
+    }
+    const echo=f.load('backends/echo.js').buildSpawn(ctx,{job:request,leg:{leg_id:'echo'}});
+    json(out.spawn,{legs:{echo}});job.spawnDoc=store.readJSON(out.spawn);
+    const blockedSpawn=childProcess.spawn;
+    const child=new EventEmitter();Object.assign(child,{pid:123,stdin:new PassThrough(),stdout:new PassThrough(),stderr:new PassThrough()});
+    // Count the fixture's intercepted attempt; return a fake child, never a vendor process.
+    childProcess.spawn=(...args)=>{assert.throws(()=>blockedSpawn(...args),/trust test blocked external I\/O/);return child;};
+    job.probeVersion=()=>null;
+    const leg={leg_id:'echo',backend:'echo',meta:{}};
+    try{job.spawnLeg(leg);assert.equal(leg.state,'running');assert.equal(leg.spawn_error,undefined);assert.equal(f.spawns,1);}
+    finally{childProcess.spawn=blockedSpawn;leg.out?.close();leg.err?.close();child.stdin.destroy();child.stdout.destroy();child.stderr.destroy();}
+  });
+  await test('T-51-shapes','class tools, resume and valid directory grants preserve backend shapes',f=>{
+    const ctx=f.load('server.js').boot(),{Job}=f.load('runner.js'),store=f.load('lib/jobstore.js');
+    ctx.config.binaries.claude=f.binaries.node;
+    const dir=path.join(f.vault,'work','jobs','shapes'),out=store.jobFiles(dir);
+    const readDir=path.dirname(put(path.join(f.vault,'notes','ok.md'),'fixture'));
+    for(const [taskClass,settings] of Object.entries(f.load('lib/router.js').CLASSES)){
+      for(const backend of ['claude','codex'])for(const session_id of [null,'12345678-1234-1234-1234-123456789abc']){
+        const request={job_id:'shapes',router:{task_class:taskClass},timeout_s:settings.timeout_s,max_cost_usd:settings.budget_usd};
+        const meta={leg_id:backend,tools:settings.tools,session_id};
+        const spec=f.load('backends/'+backend+'.js').buildSpawn(ctx,{job:request,leg:meta,promptPath:out.prompt,readPaths:[readDir],budgetUsd:request.max_cost_usd,timeoutS:request.timeout_s});
+        const job=new Job({ctx,jobDir:dir,files:out,request,promptText:'fixture',rlog:()=>{}});
+        assert.doesNotThrow(()=>job.validateSpawn(spec,{leg_id:backend,backend,meta}));
+        const rejection=backend==='claude'&&!session_id?'read grant rejected: path_outside_vault':'args rejected: backend_shape_mismatch';
+        assert.throws(()=>job.validateSpawn({...spec,args:[...spec.args,'unexpected']},{leg_id:backend,backend,meta}),{message:rejection});
+      }
+    }
+    assert.equal(f.spawns,0);
   });
   await test('T-46','uninstall preserves out-of-scope Documents',async f=>{
     const documents=put(path.join(process.env.USERPROFILE,'Documents','keep.txt'),'user content');

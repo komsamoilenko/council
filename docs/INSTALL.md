@@ -8,11 +8,14 @@ floor remains unverified, so use Node 24 for the tested path. See [VERSIONS](VER
 Extract the release or use a checkout outside your vault. Read [NOTICE](../NOTICE.md).
 You need the official Claude Code or Codex CLI for those legs, and your own
 Gemini API key for the Gemini leg. Echo needs no vendor account. Ripgrep is
-required for vault search; detection also looks in the supported vendor package.
+required for vault search. When its configured binary is missing, council_search
+reports candidates including the supported vendor package; it does not
+automatically run a candidate. Council_doctor checks the configured binary.
+Installer detect does not probe ripgrep.
 
 Once Node can run the installer, `bin\council-setup.cmd install-prereqs`
 provides the attended prerequisite path. Select `--node`, `--claude`, or
-`--codex`, or let it offer the missing items. It prints package-manager metadata
+`--codex`, or omit selectors to be offered all three items in turn. It prints package-manager metadata
 and commands before each confirmation. Winget verifies its manifest hash; npm
 verifies registry integrity and installs the version shown. Council does not
 re-verify those downloads. `--print-only` queries metadata but installs nothing.
@@ -36,7 +39,8 @@ bin\council-setup.cmd set-key
 Use the same `--profile <id>` on every command when installing a named profile.
 Detection reports platform capabilities, Node, Git, npm, CLI versions, hosts,
 login indicators, vault state, installation state, open journals and region
-guidance. It writes nothing by default. `--out` explicitly writes a new report;
+guidance. It writes nothing by default. `--out` explicitly writes a new report outside the vault, app and host
+configurations; the file must be new and its parent directory must already exist;
 `--duplicates` explicitly writes a duplicate report under `etc\reports`.
 Credential-store checks test existence only; Codex also has a login-status probe.
 
@@ -44,7 +48,9 @@ Credential-store checks test existence only; Codex also has a login-status probe
 declared plan under `%LOCALAPPDATA%\council\etc\plans\<timestamp>.json`
 plus an explicitly requested duplicate report. Review the paths, changes,
 backups, registrations and warnings. Existing vaults are adopted in place.
-`--conventions` adds the optional inbox/shared/output/index conventions;
+Conventions (inbox/shared/output/index) default on for a fresh or empty vault;
+set `conventions:false` in the answers file to turn them off. `--conventions`
+forces them on for an existing vault;
 `--relocate-runtime` places jobs and ledger outside the vault. See [CONFIG](CONFIG.md)
 and [VAULT-CONTRACT](VAULT-CONTRACT.md). Planning does not test vault writability
 by writing a probe; apply does that first.
@@ -55,7 +61,8 @@ Confirm the reviewed plan in the terminal. `apply` re-surveys its inputs and
 refuses a stale plan. Nothing is downloaded by `apply`: application files and
 templates come from the local source tree. It does not install CLIs or log in.
 
-The journalled stages create the write probe, take the setup lock, back up
+Apply first creates and removes an unjournalled write probe. It then takes
+the setup lock and starts the journal. The journalled stages back up
 pre-existing files, install the versioned app and stable launcher, publish local
 configuration, create runtime directories, merge vault rules, run Tier 0,
 register hosts, record the manifest and shared skill, then commit the journal.
@@ -65,8 +72,9 @@ Registration occurs only after Tier 0 passes.
 |---|---|
 | `%LOCALAPPDATA%\council\app\0.1.0` | Versioned runtime |
 | `%LOCALAPPDATA%\council\bin` | Stable server launcher |
-| `%LOCALAPPDATA%\council\etc` | Current-version pointer, machine configuration, profiles, manifests, journal and backups |
-| `%LOCALAPPDATA%\council\run\<id>` | Scratch directories and empty child configuration; later, protected secrets |
+| `%LOCALAPPDATA%\council\current.json` | Current-version pointer |
+| `%LOCALAPPDATA%\council\etc` | Machine configuration, profiles, manifests, journal and backups |
+| `%LOCALAPPDATA%\council\run\<id>` | Per-backend sandbox (child working) directories and the secrets directory; later, the protected key |
 | Your vault | Path-free contract, missing rules files or marked blocks, selected conventions, work and default jobs/ledger directories |
 | Host configuration | Council's entry in Claude Code, Claude Desktop and shared Codex configuration, as selected |
 | Claude configuration directory | Shared `skills\council-setup\SKILL.md`, tracked and reference-counted |
@@ -79,7 +87,8 @@ kept and reported with proposals, rather than overwritten.
 ## Verify and restart hosts
 
 `verify` checks installation integrity and drift, runs isolated zero-quota
-checks and directly probes registrations over stdio. The default uses the fast
+checks and directly probes registrations over stdio only after earlier drift
+checks pass; a Tier-0 failure also prevents the live registration probes. The default uses the fast
 Tier-0 selection; `--full` requests the broader selection. `--fast` and `--hosts`
 are accepted flags but do not change this build's verification flow. Direct probes
 prove the server works; they do not prove the host has reloaded its configuration.
@@ -102,8 +111,8 @@ input or stdin, never a key argument. It validates the key with a models-list
 HTTPS request and stores a DPAPI-protected blob at
 `%LOCALAPPDATA%\council\run\<id>\secrets\gemini-api-key.dpapi` by default.
 This is a network request, not an echo test; no claim of measured zero quota is
-made for key validation. The result contains only storage status and the last
-four characters. `set-key --delete` requires a terminal confirmation and removes
+made for key validation. Storage returns `stored`, `last_four` and `exitCode`;
+deletion returns `removed` and `exitCode`. `set-key --delete` requires a terminal confirmation and removes
 only that profile's key file. Regional billing guidance is in [NOTICE](../NOTICE.md).
 The Antigravity adapter ships disabled; see [NOTICE](../NOTICE.md).
 
@@ -115,10 +124,10 @@ The Antigravity adapter ships disabled; see [NOTICE](../NOTICE.md).
 | 1 | Step failed | Read the reported fix; inspect the journal before retrying |
 | 2 | Usage or precondition | Correct the flag, prerequisite or path; regenerate the plan if inputs changed |
 | 3 | Stale plan | Run detect and plan again; review the new plan |
-| 4 | Conflict | Review the conflicting file or proposal; preserve user edits and resolve deliberately |
-| 5 | Open journal or declined confirmation | If declined, stop; otherwise inspect detect and resume the same plan or roll back its journal |
+| 4 | Conflict, including planned host-entry adoption without `--adopt-existing` when registration is not deferred | Review the conflicting file or proposal; explicitly accept intended adoption with apply --adopt-existing |
+| 5 | Setup lock, open journal or declined confirmation | If declined, stop; for E-SETUP-LOCKED inspect the owner and wait for live setup; for an open journal resume the same plan or roll back |
 | 6 | Unsupported platform | Use Windows for installation and supervised consultations |
-| 7 | Verification drift | Inspect drift details, repair through the installer, then verify again |
+| 7 | Verification drift, leftover verify-ledger files or a slow registration round trip | Inspect drift/cleanup details or E-VERIFY-SLOW, repair, then verify again |
 
 Recovery uses `apply --plan "<file>" --resume` or
 `rollback --journal <timestamp>`. Never clear a live setup lock;

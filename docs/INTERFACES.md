@@ -16,7 +16,7 @@ by exactly one unindented `NEXT:` line as its last line. Answers appear in
 screen text, not as a plain answer string in `structuredContent`:
 
 ```text
-<<<COUNCIL_UNTRUSTED_OUTPUT job=<id> leg=<leg>>>
+<<<COUNCIL_UNTRUSTED_OUTPUT job=<id> leg=<leg>>>>
   every line of third-party output is indented two spaces
 <<<END_COUNCIL_UNTRUSTED_OUTPUT>>>
 ```
@@ -42,8 +42,8 @@ checks also apply. Optional arguments:
 | `model` | Map to model strings matching `^[a-z0-9][a-z0-9._-]{0,63}$` |
 | `context_note` | String, maximum 4000 characters |
 | `stakes` | `normal` (default) or `high` |
-| `timeout_s` | Integer 30-1800 in normal operation |
-| `max_cost_usd` | Number 0.01-5; Claude leg only |
+| `timeout_s` | Integer 30-1800; can only lower the selected class timeout |
+| `max_cost_usd` | Number 0.01-5; can only lower the selected class budget; Claude leg only |
 | `continue_from` | Existing job ID |
 | `force_round` | Boolean, default false |
 | `reason` | String, maximum 300 characters |
@@ -53,8 +53,21 @@ checks also apply. Optional arguments:
 
 Job IDs match `^j_[0-9]{13}_[0-9a-f]{6}$`. Routing and safety checks can refuse
 schema-valid arguments. Duplicate echo legs are legal; real same-vendor pairs
-are subject to routing refusal. Read paths are validated and files staged as
-copies. The Antigravity adapter is disabled; see [NOTICE](../NOTICE.md).
+are subject to routing refusal. `stakes:"high"` forces a cross-vendor pair
+for start, adding a backend if needed (or reducing a full same-vendor list
+to a pair); echo-only lists stay unchanged. `task_class:"judge"` ignores
+`backends`, selects two Claude legs and bypasses the same-vendor check.
+Read paths are validated; files over 50 MiB refuse with `vault_unavailable`.
+The server stages files under the job directory, but the runner refuses those
+staged `--add-dir` grants because jobs are excluded. Use a permitted narrow
+vault directory for grant-bearing adapters. The Antigravity adapter is
+disabled by default; see [NOTICE](../NOTICE.md).
+
+The class ceilings are quick: 180 s/$0.20; writing: 600 s/$0.60;
+code_review and architecture: 900 s/$1.50; research: 1200 s/$1.50;
+verify: 600 s/$0.80; judge: 600 s/$1.00; general: 900 s/$1.00.
+Configured fuse ceilings can lower them further. A larger caller value does
+not raise a class ceiling.
 
 A successful start returns `profile`, `vault`, `job_id`, `kind`, `state`,
 `round`, `legs`, `router`, `deadline_at`, `poll_after_s:0`,
@@ -93,7 +106,9 @@ wording overlap, not correctness or agreement.
 
 Required `prompt`. Accepts start arguments except `backends`, `continue_from`,
 `idempotency_key` and `force_round`; instead `backend` is one backend and
-defaults to `claude`. `timeout_s` is 30-900, default 300.
+defaults to `claude`. `timeout_s` has schema bounds 30-900 and default 300,
+and can only lower the selected class timeout. `max_cost_usd` likewise only
+lowers the class budget. `stakes:"high"` does not add a vendor for ask.
 
 Returns a terminal poll payload if finished within the blocking window;
 otherwise returns a start payload with `degraded:true`, `ask_degrade_reason`
@@ -146,7 +161,10 @@ Returns `ok`, `mode`, `council_version`, `server_pid`, `host`,
 `client_claimed`, `depth`, `profile`, `config`, `vault`, `sandbox_root`,
 `stop_files`, `app_dir`, `integrity`, `layout`, `reaper`, `pending_hosts`,
 `backends`, `rg`, `fuses`, `jobs`, `ledger`, `accounts`, `child_env`,
-`warnings` and backend-availability diagnostics. Some values are null when
+`warnings`, `gemini`, `agy`, `gemini_enabled`, `vault_config_ignored`,
+`npm_root_ignored` and `proxy_env_ignored`. With resolved paths it also adds
+`cancel_timings` and `prune_hint`. `config` includes `expanded` and
+`prompt_form` as well as its path and trust report. Some values are null when
 paths cannot be resolved. `config.trust` includes `ok`, `binaries_ok`,
 `forbidden_flags_source`, `failures` and `allowed_roots`. Backends report
 path/existence/availability/reason/account plus version and probe details
@@ -167,58 +185,77 @@ Use `bin\council-setup.cmd <verb> [flags]` or
 `node installer/setup.mjs <verb> [flags]`. `--help`/`-h` prints usage.
 Global flags: `--profile <id>`, `--json`, `--no-color`, `--verbose`,
 `--log <file>`. Profile IDs match `^[a-z0-9][a-z0-9_-]{0,31}$`.
-`--log` is accepted but does not create a log file; read-only output invariants
-take precedence. `--verbose` adds error stacks. Arguments are separate tokens,
+`--log` writes a new file under `etc/logs` on completed normal apply paths,
+including unchanged apply; invalid or existing targets refuse with `E-USAGE`.
+Apply dry runs and migration recovery do not write it. Detect, duplicates and
+new-task suppress it with a `log` result reason; plan adds a warning; other
+verbs ignore it. `--no-color` is accepted but inert. `--verbose` adds error stacks.
+Arguments are separate tokens,
 not `--key=value`. Only `new-task` takes a positional argument.
 
 | Verb | Accepted verb-specific flags |
 |---|---|
 | `detect` | `--vault <path> --duplicates --out <file>` |
 | `plan` | `--vault <path> --merge block/sidecar/none/ask --conventions --relocate-runtime --hosts <list> --register-as <name> --owner <text> --chat-language <text> --answers <file> --large-vault --git-init --allow-unsupported-platform --duplicates` |
-| `apply` | `--plan <file> --yes --resume --dry-run --no-register --adopt-existing` |
+| `apply` | `--plan <file>` (required), `--yes --resume --dry-run --no-register --adopt-existing` |
 | `verify` | `--fast --full --hosts` |
 | `update` | `--channel <git or zip> --ref <ref> --keep <count> --check --prune-versions --rollback [version]` |
-| `uninstall` | `--all --keep-app --keep-vault --purge-runtime --purge-backups --yes` |
+| `uninstall` | `--all --keep-app --keep-vault --purge-runtime --purge-backups --yes`; requires input/output TTY; `--yes` cannot accompany either purge flag |
 | `install-prereqs` | `--node --claude --codex --print-only` |
 | `login` | `--only <claude or codex or gemini>` |
 | `migrate` | `--from <old directory> --phase <0 to 3> --host <surface> --dry-run --rollback` |
-| `rollback` | `--journal <timestamp> --yes` |
+| `rollback` | `--journal <timestamp>` (required), `--yes` |
 | `set-key` | `--delete` |
 | `duplicates` | `--vault <path> --max-files <1..200000> --out <report file>` |
 | `new-task <slug>` | `--vault <path> --agents claude,codex,gemini` |
 | `unlock` | `--force-unlock` (required) |
 
 Host surfaces are `claude-code`, `claude-desktop`, `codex`; the hosts option
-also accepts `none` or `all`. Merge chooses one of the four listed values.
+also accepts `none` or `all`. Migration phase 2 requires one `--host` and
+enforces cutover order: `codex`, `claude-desktop`, then `claude-code`.
+Migrate requires `--phase` or `--rollback`. New-task agents default to the
+detected usable CLIs, not all three names.
+
+Plan obtains vault, owner, chat language, merge and hosts from CLI flags,
+answers or interactive questions/defaults; those flags are not mandatory.
+`--merge ask` only prompts on a TTY without `--answers`/`--json`; otherwise
+it falls back to block, including scalar `ask` in an answers file. Per-file `ask` becomes block. An interactive scalar
+answer `ask` is refused when the planner reaches a file requiring a decision.
 Duplicate report output is constrained to `etc/reports`; detect's `--out`
-must be a new file outside the vault, app and host configurations. Explicit
+must be a new file outside the vault, app and host configurations, with an
+existing parent directory. Explicit
 CLI flags override answers-file values. `apply --adopt-existing` confirms
 compatible legacy host entry adoption; `--no-register` defers registrations
-and must remain consistent on resume. Verify always checks recorded hosts and
-runs Tier 0 when earlier drift checks pass: its default is the fast selection,
+and must remain consistent on resume. Verify inspects recorded registrations;
+Tier 0 runs only after earlier drift checks pass, and live stdio host probes
+run only if no drift remains after Tier 0. Its default is the fast selection,
 `--full` broadens it, and the accepted `--fast`/`--hosts` flags add no behavior.
 `update --keep` defaults to 2 for pruning;
 `--rollback` without a version selects the recorded previous version.
 
 ## Installer JSON and exit codes
 
-`--json` emits one compact result object for the selected verb, not an MCP
-envelope and not a universal `{ok,data}` wrapper. Attended prompts and progress
-may still be written to the terminal; JSON mode does not authorize unattended
-login, prerequisite installation or key deletion. Result variants include:
+`--json` selects a compact result object for the verb, not an MCP envelope
+or a universal `{ok,data}` wrapper. Verify, uninstall, update, install-prereqs,
+login, set-key and migrate already print JSON without the flag; it compacts
+their result. Rollback also prints JSON in both modes. Uninstall, login,
+install-prereqs and set-key write attended prompts/progress to stdout, so
+stdout under `--json` is not necessarily a single JSON object. JSON mode does
+not authorize unattended login, prerequisite installation or key deletion.
+Result variants include:
 
 | Verb | Principal result fields (optional fields depend on the path taken) |
 |---|---|
-| `detect` | `schema:1, verb, profile, blocks, warnings, exitCode`; blocks contain named facts and `errors` |
-| `plan` | `schema:1, verb, profile, created_at, file, answers, detect_fingerprint, steps, registrations, pending_hosts, untouched, warnings, adoptions, proposals, file_sha256`; saved plan omits its own hash field |
-| `apply` | `profile, changed, registrations, backups, warnings, pending_hosts, journal, proposals, exitCode`; unchanged runs add `unchanged, verified`; dry run returns `dryRun, plan` |
-| `verify` | `profile, drift, warnings, registrations, created, cleanup_left, notice, note, exitCode`, plus check results |
+| `detect` | `schema:1, verb, profile, blocks, warnings, exitCode`, optionally `duplicates, log`; blocks contain named facts and `errors` |
+| `plan` | `schema:1, verb, profile, created_at, file, answers, detect_fingerprint, steps, registrations, pending_hosts, untouched, warnings, adoptions, proposals, transplanted, layout, cloud_sync, skill, file_sha256`, optionally `duplicates`; saved plan omits its own hash field |
+| `apply` | `profile, changed, registrations, backups, warnings, pending_hosts, journal, proposals, tier0, exitCode`; unchanged runs add `unchanged, verified`; dry run returns `dryRun, plan`; migration dry run returns `migration, dryRun, phase, operations` |
+| `verify` | `profile, drift, warnings, registrations, created, cleanup_left, notice, note, trust, agy, tier0, exitCode`; refusals add `reason` with `exitCode:4` |
 | `update` | `changed, kept, proposals, warnings, exitCode`; variants add `available`, `unchanged`, source/version or refusal details |
-| `uninstall` | `profile, removed, skipped, scope, backups, exitCode` |
+| `uninstall` | `profile, removed, skipped, scope, backups, exitCode`, plus `software` on completed removal or `reason` on refusal |
 | `install-prereqs` | `items, exitCode`; each item has `item` and `installed`, `declined`, `printed` or `skipped`/`confirmed` |
 | `login` | `steps` with kind/skipped and applicable store/login status, `exitCode` |
 | `set-key` | `stored:true, last_four, exitCode:0`, or `removed, exitCode` for deletion |
-| `migrate` | `phase, exitCode` plus `changed`, `registered`, `journal`, `host`, `leftovers`, `unchanged` or dry-run operations as applicable |
+| `migrate` | `exitCode`, usually `phase`, plus `changed`, `registered`, `journal`, `host`, `leftovers`, `unchanged`, `rollback`, `plan`, `steps`, `next` or dry-run operations as applicable; declined confirmation omits `phase`, as does an open-journal dry run (`dryRun, open_journals, exitCode:5`) |
 | `rollback` | `restored, conflicts`, with `exitCode` and/or `unchanged` |
 | `duplicates` | `schema:1, verb, vault, files, hashedBytes, capped, groups, notHashed, indexRepeats, notice, reportFile` |
 | `new-task` | `schema:1, verb, path, agents, files, indexAppended` and optional `note` |
@@ -236,9 +273,9 @@ Some successful result variants omit `exitCode`; process exit is still 0.
 | 2 | Usage/precondition |
 | 3 | Stale plan |
 | 4 | Conflict |
-| 5 | Open journal or declined confirmation |
+| 5 | Setup lock (`E-SETUP-LOCKED`), open journal or declined confirmation |
 | 6 | Unsupported platform |
-| 7 | Verify drift |
+| 7 | Verify drift, leftover verify-ledger files or `E-VERIFY-SLOW` |
 
 See [INSTALL](INSTALL.md) for recovery actions, [SPEC](SPEC.md) for ownership
 and journal rules, and [MIGRATION](MIGRATION.md) for migration phases.

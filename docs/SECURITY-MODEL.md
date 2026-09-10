@@ -17,8 +17,12 @@ from another process with unrestricted access to that user's files.
 Keep Z0 and Z1 outside all vaults and agent write grants. Runtime paths must
 stay within the configured vault or runtime root and outside executable code.
 The path-free vault contract is discovery data, never runtime authority.
-Machine binary settings replace profile binary values; allowed executable
-roots are derived narrowly from platform and vendor locations. Configuration
+Machine binary settings replace profile binary values in installed operation.
+The bootstrap exception is an explicit configuration outside every known
+vault, with no profile-discovery errors: it may supply binaries. Real host
+registrations cannot use the `COUNCIL_CONFIG` override (it is honored only
+without a host or with the smoke host). Allowed executable roots are derived
+narrowly from platform and vendor locations. Configuration
 cannot turn the vault or an entire package root into an executable allowlist.
 
 ## Boot checks and argv guard
@@ -28,19 +32,34 @@ integrity manifest. Failure enters doctor-only mode. Diagnostics and permitted
 reads remain available when their paths can be resolved; execution is refused.
 Unsupported platform capabilities similarly refuse supervised execution.
 
-The runner rechecks mutable job data before each spawn: executable identity,
-allowed roots, argument shape, forbidden flags, working directory, profile and
-read grants. Prompts travel over stdin, not a shell command. Child processes
-use executable paths and argument arrays with no command shell. Hosts register
-absolute Node plus the stable JavaScript launcher, never a command shim.
-An edited `spawn.json` is a request to validate, not executable authority.
+The runner checks the request profile at boot. Before each leaf spawn it
+rechecks executable identity and allowed roots, applies the forbidden-argv
+guard, and compares the working directory with the trusted backend sandbox
+using `platform.sameFile`. It rebuilds a comparison spec through the existing
+backend builder, using trusted paths and class-defined tools, and requires
+exact argv, executable and prompt-transport matches. Per-leg prompt paths
+must match the expected job prompt. Every emitted `--add-dir` grant passes
+`paths.resolveVaultPath` again and must not intersect any known runtime root.
+Invalid cwd, grants or shapes produce `spawn.json ... rejected: <reason>`
+without spawning that leg.
+
+An edited `spawn.json` is a request to validate, not executable authority;
+prompts and requested model/session parameters remain untrusted data.
+Claude, Codex, Gemini API and echo send prompts over stdin. The Antigravity adapter,
+disabled by default, uses argv. Both use executable paths and argument arrays
+with no command shell. Hosts register absolute Node plus the stable
+JavaScript launcher, never a command shim.
 
 Claude runs in scratch with safe/restricted mode, empty MCP configuration,
 explicit tools and noninteractive permissions. Codex ignores user configuration
 and rules and pins a read-only sandbox, including resumed calls. Requested
 read paths must resolve inside the vault and outside excluded jobs, ledger and
-code paths; files are staged as copies so granting their parent cannot grant
-the entire vault. Read access can still expose the selected content to a vendor.
+code paths. The server stages named files as copies under the job directory;
+the runner now refuses those staged grants because jobs are excluded, including
+when relocated outside the vault. No runtime-directory exception is granted.
+Use a permitted narrow vault directory for adapters emitting read grants.
+Files over 50 MiB are refused during staging; the runner also checks the size
+of any file grant. Read access can expose selected content to a vendor.
 
 ## Child environment and proxy scope
 
@@ -84,10 +103,15 @@ Starts check STOP files, depth, vault availability and prompt limits before
 spawning. Shared reservations count legs, not tool calls: rolling hourly,
 daily and concurrency caps apply across hosts of a profile, with a fan-out
 reserved entirely or refused entirely. Defaults are 20 legs/hour, 80/day,
-3 concurrent and maximum depth 2. See [PRICING](PRICING.md).
+3 concurrent and maximum depth 2. `COUNCIL_MAX_PER_HOUR`,
+`COUNCIL_MAX_PER_DAY`, `COUNCIL_MAX_RUNNING` and `COUNCIL_MAX_DEPTH` in the
+trusted server environment override configuration caps. Installer host
+registrations only permit `COUNCIL_HOST` and `COUNCIL_PROFILE`, so cannot
+supply these overrides. See [PRICING](PRICING.md).
 
 STOP locations include the vault's `STOP`, the profile runtime's `STOP`, the
-global `%LOCALAPPDATA%\council\STOP`, and configured extra stop paths.
+global `%LOCALAPPDATA%\council\STOP`, and extra paths from
+`COUNCIL_STOP_FILES` in the environment (semicolon-separated on Windows).
 The global file remains outside vault-only agent access. The runner enforces
 deadlines, observes cancellation and bounds captured output. Budget controls
 are backend-specific; fuses do not guarantee a universal dollar ceiling.

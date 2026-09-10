@@ -413,7 +413,7 @@ function terminalNext(view, payload) {
     return 'use the readable leg, tell the user plainly which leg failed and why, and never present a partial fan-out as a full cross-check.';
   }
   if (state === 'timeout') {
-    return 'tell the user the job hit its wall clock and ask whether the user wants to retry with a larger timeout_s.';
+    return 'tell the user the job hit its wall clock and ask whether the user wants to retry with a task class that has a longer time window.';
   }
   if (state === 'cancelled') {
     return 'tell the user the job was cancelled and its partial spend is burned; start a fresh council_start if the user still wants the answer.';

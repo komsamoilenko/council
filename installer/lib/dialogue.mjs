@@ -18,6 +18,7 @@ const catalogue = {
   'E-MARKER-VERSION-UNKNOWN': [4, 'The marker version is unknown', 'this build understands v=1 only', 'Use an installer supporting this marker version.'],
   'E-REPARSE-TARGET': [4, 'A target is a link or reparse point', 'the write could reach another tree', 'Choose a regular file or directory.'],
   'E-PLAN-STALE': [3, 'The plan inputs changed', 'the reviewed plan no longer matches detection', 'Run plan again.'],
+  'E-SETUP-LOCKED': [5, 'The setup lock could not be acquired or released', 'another setup owner or an unresolved lock prevents safe mutation', 'Wait for an active setup to finish; inspect detect and use unlock --force-unlock only for a stale owner.'],
   'E-JOURNAL-OPEN': [5, 'An unfinished journal exists', 'an earlier apply did not commit', 'Resume its plan with apply --plan <same> --resume or use rollback --journal <ts>.'],
   'E-HOST-WRITE': [1, 'A host configuration write failed', 'the host may have locked the file', 'Close Codex and retry.'],
   'E-HOST-READBACK': [1, 'Host registration readback failed', 'the saved entry differs from the requested entry', 'Inspect the host configuration and retry.'],

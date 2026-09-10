@@ -6,7 +6,7 @@ Council has no service fee or account of its own. It drives vendor CLIs you
 already pay for and the Gemini API using your own key. A consultation can
 consume subscription quota or incur API charges under your vendor agreement.
 Council does not quote current vendor prices; see [NOTICE](../NOTICE.md) for
-service and terms links. The Antigravity adapter is disabled; see [NOTICE](../NOTICE.md).
+service and terms links. The Antigravity adapter is disabled by default; see [NOTICE](../NOTICE.md).
 
 ## Fuses are usage bounds
 
@@ -25,14 +25,17 @@ configuration belongs. STOP files, deadlines, prompt limits and cancellation
 also limit runaway work.
 
 `max_cost_usd` is the Claude leg's budget parameter, not a cross-vendor spending
-cap. Gemini without configured pricing is explicitly reported as cost-uncapped.
+cap. Caller values can only lower the selected task class's budget (and
+`timeout_s` can only lower its time window); the schema maximum is not the
+effective class ceiling. Gemini without configured pricing is explicitly reported as cost-uncapped.
 Reported costs can be estimates or unknown; a cancelled or failed consultation
 can still have spent quota. Read-only sandboxes do not make model calls free.
 
 ## Ledger
 
 Monthly `council-YYYY-MM.jsonl` files are the local spend record: job/leg events,
-host, backend, model, account label, token usage, elapsed time, estimated cost,
+requester host (`requester.host`), backend, model, account label, token usage,
+wall time (`wall_ms`) and estimated cost (`est_cost_usd`) on finished-leg rows,
 refusals and cancellation diagnostics. The default location is your vault's
 `ledger/`; relocation puts it under the profile runtime root. The runtime
 appends rather than rewriting history. Malformed rows are counted and skipped;

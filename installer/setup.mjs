@@ -57,7 +57,7 @@ install-prereqs: --node --claude --codex --print-only (TTY only)
 login: --only claude|codex|gemini
 set-key: --delete (no key argument; hidden terminal input or stdin)
 migrate: --from <old bin/council> --phase 0|1|2|3 --host <surface> --dry-run --rollback
---log is accepted but does not write: detect/plan permit only their declared output files.
+--log: apply writes a new file under etc/logs; detect/duplicates/new-task suppress it with a result reason; plan warns; other verbs ignore it.
 Exit codes: 0 ok; 1 step failed; 2 usage/precondition; 3 stale plan; 4 conflict;
             5 open journal/declined; 6 unsupported platform; 7 verify drift.
 `;
