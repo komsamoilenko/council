@@ -128,6 +128,14 @@ export async function verbs2Cases(make,tree) {
     return {...f,ctx,term,from:path.join(f.vault,'bin','council'),hosts:Object.values(hostPaths(ctx)).flat()};
   };
   const phase=async(f,n,host)=>{const r=await migrate({from:f.from,phase:String(n),...(host?{host}:{})},f.ctx);assert.equal(r.exitCode,0,JSON.stringify(r));return r;};
+  await check('migration phase 0 dry-run accepts more than 5000 job-store files',async()=>{
+    const f=await migrationFixture();
+    for(let i=0;i<5001;i++)put(path.join(f.vault,'work','jobs','fixture-date','fixture-job',String(i)),'fixture');
+    const before=snapshot(f.dir);
+    const result=await migrate({from:f.from,phase:'0','dry-run':true},f.ctx);
+    assert.equal(result.exitCode,0,JSON.stringify(result));
+    assertUnchanged(f.dir,f.ctx.env.USERPROFILE,before,snapshot(f.dir),[],f.ctx.dirs.id);
+  });
   await check('migration dry-run, declined step and schema mismatch write nothing',async()=>{
     const f=await migrationFixture(),before=snapshot(f.dir);
     assert.equal((await migrate({from:f.from,phase:'0','dry-run':true},f.ctx)).exitCode,0);

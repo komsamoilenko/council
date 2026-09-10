@@ -181,7 +181,7 @@ export async function migrate(options,ctx) {
     const old=readJSON(path.join(from,'config.json'),{});
     for(const [key,expected] of [['jobs_dir','work/jobs'],['ledger_dir','ledger']])if(path.resolve(vault,old.layout?.[key]||expected)!==path.resolve(vault,expected))throw fail('E-USAGE','Previous store layout needs explicit review.');
     output.write('Phase 0: snapshot the vault with your own version-control workflow before continuing.\n');
-    const built=await buildPlan({vault,profile:options.profile||'default',merge:'none',hosts:'none',conventions:false,'relocate-runtime':false,json:true},ctx);
+    const built=await buildPlan({vault,'large-vault':true,profile:options.profile||'default',merge:'none',hosts:'none',conventions:false,'relocate-runtime':false,json:true},ctx);
     // Only the pointer may be published in the old vault, even if a contract is missing.
     for(const step of built.plan.steps)if(step.id==='S6')step.writes=step.writes.filter(w=>w.path===path.join(vault,'.council','vault.json')||w.directory&&under(path.join(vault,'.council','vault.json'),w.path));
     built.plan.file_sha256=planFileHash(built.plan);
@@ -195,7 +195,7 @@ export async function migrate(options,ctx) {
     if(m.registrations.some(r=>r.name==='council-next'))return {phase:1,unchanged:true,exitCode:0};
     if(options['dry-run'])return {phase:1,dryRun:true,steps:['verify','plan --hosts claude-code --register-as council-next','apply'],exitCode:0};
     requireTTY(ctx);const checked=await (ctx.migrationVerify||verify)({profile:m.profile},{...ctx,verifyUnregistered:true});if(checked.exitCode)throw fail('E-TIER0-FAILED');
-    const built=await buildPlan({vault,profile:m.profile,merge:'none',hosts:'claude-code','register-as':'council-next',conventions:false,json:true},ctx);
+    const built=await buildPlan({vault,'large-vault':true,profile:m.profile,merge:'none',hosts:'claude-code','register-as':'council-next',conventions:false,json:true},ctx);
     if(built.plan.registrations.length!==1)throw fail('E-USAGE','Claude Code is required for side-by-side proof.');
     await publishPlan(built);const r=await apply({plan:built.plan.file},ctx);
     return {phase:1,journal:r.journal,registered:['claude-code :: council-next'],next:'Compare council_doctor on both servers; run an echo consultation through council-next (zero quota).',exitCode:r.exitCode};

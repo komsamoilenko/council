@@ -19,6 +19,14 @@ const templates = path.join(repo,'installer','templates');
 const vaultTemplates = path.join(templates,'vault');
 const SIX_IGNORE_LINES = ['work/jobs/','ledger/','STOP','.council/.write-probe','*.council-new.*','*.council-tmp-*'];
 export async function sanity(vault, ctx, options) {
+  try { return await sanityInner(vault,ctx,options); }
+  catch (e) {
+    if (['EPERM','EACCES'].includes(e.code))
+      throw Object.assign(fail('E-STEP','vault_subtree_unreadable:' + (e.path || vault)), {exitCode:4});
+    throw e;
+  }
+}
+async function sanityInner(vault, ctx, options) {
   if (typeof vault !== 'string' || !vault) throw fail('E-VAULT-NOT-A-DIR');
   if (/^(\\\\|\/\/)/.test(vault)) throw fail('E-VAULT-ROOT-REFUSED', vault);
   const resolved = realFuture(vault);

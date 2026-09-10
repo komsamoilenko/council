@@ -56,6 +56,8 @@ export function context(overrides = {}) {
     const bits = r.status === 0 ? Number(r.stdout.trim()) : NaN;
     return Number.isFinite(bits) ? { bits } : null;
   };
+  ctx.linkedAttributes = new Map();
+  ctx.io ||= fs;
   return ctx;
 }
 export async function cloud(file, ctx) { return cloudsync(file, { env: ctx.env, providerPaths: ctx.dirs.providerPaths, platform: { fileAttributes: ctx.attributes } }); }
@@ -63,7 +65,9 @@ export async function linked(file, ctx) {
   for (let p = path.resolve(file); ; p = path.dirname(p)) {
     if (exists(p)) {
       if (fs.lstatSync(p).isSymbolicLink()) return true;
-      const a = await ctx.attributes(p); if (a?.reparsePoint || (a?.bits & 0x400)) return true;
+      ctx.linkedAttributes ||= new Map();
+      if (!ctx.linkedAttributes.has(p)) ctx.linkedAttributes.set(p, await ctx.attributes(p));
+      const a = ctx.linkedAttributes.get(p); if (a?.reparsePoint || (a?.bits & 0x400)) return true;
     }
     if (path.dirname(p) === p) return false;
   }
@@ -180,6 +184,8 @@ export async function survey(options, ctx) {
   let vault, vaultErrors = [];
   try { vault = await inspectVault(options.vault || resolveVault(ctx), ctx); if (vault.error) vaultErrors.push(fail(vault.error,vault.path)); }
   catch (e) { vault={path:options.vault || null,contracts:{}};vaultErrors.push(e); }
+  warnings.push(...(vault.warnings || []));
+  if (vault.excluded) warnings.push('vault_file_count_excludes:' + JSON.stringify(vault.excluded));
   add('vault', { vault }, vaultErrors);
   const config = localConfig, manifest = installJSON(ctx.dirs.manifest), current = installJSON(ctx.dirs.current);
   add('install', { current, configPresent: !!config, manifestPresent: !!manifest,
@@ -199,10 +205,32 @@ export function resolveVault(ctx) {
   }
   return readJSON(ctx.dirs.config)?.vault || null;
 }
+export const accessDenied = e => ['EPERM','EACCES'].includes(e.code);
+export function unreadable(root, file, warnings, required = []) {
+  const rel = path.relative(root,file).split(path.sep).join('/') || '.';
+  if (required.some(p => path.resolve(p).toLowerCase() === path.resolve(file).toLowerCase()))
+    throw Object.assign(fail('E-STEP', 'vault_subtree_unreadable:' + rel), { exitCode: 4 });
+  const warning = 'vault_subtree_unreadable:' + rel;
+  if (!warnings.includes(warning)) warnings.push(warning);
+}
+export function vaultRequired(root, ctx) {
+  const config = readJSON(ctx.dirs.config);
+  return ['', '.council', 'work', 'work/jobs', 'ledger', ...CONTRACT_FILES,
+    config?.layout?.work_dir, config?.layout?.jobs_dir, config?.layout?.ledger_dir]
+    .filter(p => p !== undefined).map(p => path.resolve(root,p));
+}
 export async function inspectVault(value, ctx) {
+  try { return await inspectVaultInner(value, ctx); }
+  catch (e) {
+    if (accessDenied(e)) throw Object.assign(fail('E-STEP', 'vault_subtree_unreadable:' + (e.path || value)), { exitCode: 4 });
+    throw e;
+  }
+}
+async function inspectVaultInner(value, ctx) {
   if (!value) return { path: null, exists: false, contracts: {} };
+  const io = ctx.io || fs;
   const file = path.resolve(value), present = exists(file);
-  const result = { path: present ? fs.realpathSync(file) : realFuture(file), exists: present, directory: !present || fs.statSync(file).isDirectory(), contracts: {}, fileCount: 0 };
+  const result = { path: present ? fs.realpathSync(file) : realFuture(file), exists: present, directory: !present || fs.statSync(file).isDirectory(), contracts: {}, fileCount: 0, excluded: {}, warnings: [] };
   if (!result.directory) return { ...result, error: 'E-VAULT-NOT-A-DIR' };
   result.git = false;
   for (let p = result.path; ; p = path.dirname(p)) { if (exists(path.join(p,'.git'))) { result.git = true; break; } if (path.dirname(p) === p) break; }
@@ -217,7 +245,7 @@ export async function inspectVault(value, ctx) {
     if (item.reparse || !fs.statSync(target).isFile()) continue;
     const a = await ctx.attributes(target);
     if (a?.offline || a?.recallOnDataAccess || (a?.bits & 0x401000)) { item.notHashed = 'cloud-only'; continue; }
-    const bytes = fs.readFileSync(target); item.bytes = bytes.length;
+    const bytes = io.readFileSync(target); item.bytes = bytes.length;
     if (name.endsWith('.json')) {
       const c = readJSON(target);
       item.contract = { schema:Number.isInteger(c?.schema)?c.schema:null, contract_version:Number.isInteger(c?.contract_version)?c.contract_version:null,
@@ -227,15 +255,33 @@ export async function inspectVault(value, ctx) {
     const scan = scanMarkers(bytes, { style: name === '.gitignore' ? 'hash' : 'markdown' });
     Object.assign(item, { marker: !!scan.block, markerVersion: scan.block?.version || null, unversioned: !!scan.block?.upgraded, protocol: !!scan.contractPresent, error: scan.ok ? null : scan.code, lines: bytes.toString('utf8').split('\n').length });
   }
-  const walk = async dir => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const p = path.join(dir,entry.name), st = fs.lstatSync(p);
+  const required = vaultRequired(file,ctx);
+  const config = readJSON(ctx.dirs.config);
+  const excludedRoots = ['work/jobs','ledger',config?.layout?.jobs_dir,config?.layout?.ledger_dir]
+    .filter(Boolean).map(p => path.resolve(file,p).toLowerCase());
+  // Excluded trees get an lstat-only census, never the content/marker survey.
+  const walk = (dir, excluded = null) => {
+    let entries;
+    try { entries = io.readdirSync(dir); }
+    catch (e) { if (!accessDenied(e)) throw e; unreadable(file,dir,result.warnings,required); return; }
+    for (const entry of entries) {
+      const p = path.join(dir,entry);
+      if (!under(p,file)) continue;
+      let st;
+      try { st = io.lstatSync(p); }
+      catch (e) { if (!accessDenied(e)) throw e; unreadable(file,p,result.warnings,required); continue; }
       if (st.isSymbolicLink()) continue;
-      if (st.isDirectory()) { const a = await ctx.attributes(p); if (!(a?.reparsePoint || (a?.bits & 0x400))) await walk(p); }
-      else if (st.isFile()) result.fileCount++;
+      if (st.isDirectory()) {
+        const skip = excluded || (['.git','node_modules'].includes(entry.toLowerCase()) || excludedRoots.includes(p.toLowerCase())
+          ? path.relative(file,p).split(path.sep).join('/') : null);
+        if (skip) result.excluded[skip] ||= 0;
+        walk(p,skip);
+      } else if (st.isFile()) {
+        if (excluded) result.excluded[excluded]++; else result.fileCount++;
+      }
     }
   };
-  await walk(file);
+  walk(file);
   return result;
 }
 export function fingerprint(detect, registerAs = 'council') {

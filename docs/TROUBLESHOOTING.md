@@ -54,3 +54,5 @@ For an apply log, choose a new file under `etc/logs/` with `--log <file>`.
 `--no-register` installs the local profile and lists the deferred hosts in the report.
 Adopting an existing council server entry additionally requires `--adopt-existing`;
 `--yes` confirms the plan only. Unrelated registrations are never adoptable.
+
+Unreadable optional vault subtrees are skipped with `vault_subtree_unreadable:<relative path>`; the file count excludes `.git`, `node_modules`, the job store and the ledger directory, whose counts are reported separately.

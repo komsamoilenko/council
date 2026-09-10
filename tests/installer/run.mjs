@@ -45,6 +45,14 @@ if (process.argv.includes('--child')) {
     assert.equal(path.isAbsolute(file),true); assert.equal(opts.cwd,os.tmpdir()); assert.equal(opts.shell,false);
     assert.equal(/\.(cmd|bat|ps1)$/i.test(file),false);
     calls.push({file,args});
+    if (path.basename(file).toLowerCase()==='powershell.exe' && args.at(-1).includes('ConvertTo-Json -Compress')) {
+      assert.deepEqual(args.slice(0,-1),['-NoProfile','-NonInteractive','-Command']);
+      assert.ok(args.at(-1).includes('Get-Item -LiteralPath $_ -Force -ErrorAction Stop'));
+      const literals=args.at(-1).split('@(@(')[1].split(') | ForEach-Object')[0];
+      const files=[...literals.matchAll(/'((?:[^']|'')*)'/g)].map(m=>m[1].replaceAll("''","'"));
+      assert.ok(files.length>0&&files.length<=200);
+      return {status:0,stdout:JSON.stringify(files.map(p=>path.basename(p)==='cloud.md'?0x1000:0))};
+    }
     if (file===node && args[0]===path.join(path.dirname(node),'node_modules','npm','bin','npm-cli.js')) return {status:0,stdout:args[1]==='root'?npmRoot:args[1]==='prefix'?path.dirname(npmRoot):'11.0.0',stderr:''};
     if (file===path.join(fakebin,'git')) return args.includes('check-ignore')?{status:128,stdout:'',stderr:''}:{status:0,stdout:'git version 2.51.2',stderr:''};
     if (file===path.join(npmRoot,'@anthropic-ai','claude-code','bin','claude.exe')) return {status:0,stdout:'2.1.263 (Claude Code)',stderr:''};
@@ -98,6 +106,8 @@ if (process.argv.includes('--child')) {
         const p=JSON.parse(fs.readFileSync(file,'utf8'));assert.equal(r.out,planReport(p));unchanged(baseline,[path.relative(root,file)]);
         if(caseName==='obsidian-like' && process.env.COUNCIL_PRINT_REPORT==='1')process.stdout.write('BEGIN ACTUAL OBSIDIAN PLAN\n'+r.out+'END ACTUAL OBSIDIAN PLAN\n');
       });
+    } else if(caseName==='survey') {
+      const {surveyCases}=await import('./survey-cases.mjs');count+=await surveyCases(root,ctx,invoke);
     } else if(caseName==='behavior') {
       const vault=fixture(root,'empty',ctx);
       await test('preflight has already run',async()=>assert.equal(preflight(),root));
@@ -263,7 +273,7 @@ if (process.argv.includes('--child')) {
   const {names}=await import('./fixtures.mjs');let passed=0,failed=0;
   const invalid=spawnSync(process.execPath,[self,'--child','empty'],{env:{...process.env,COUNCIL_TEST_ROOT:''},encoding:'utf8',windowsHide:true});
   if(invalid.status===2 && invalid.stderr.includes('REFUSED: installer child is not sandboxed')){passed++;process.stdout.write('PASS sandbox pre-flight refusal\n');}else{failed++;process.stdout.write('FAIL sandbox pre-flight refusal\n');}
-  const cases=process.argv.includes('--exercise-failure-cleanup')?[['cleanup-failure','win32']]:process.argv.includes('--report')?[['obsidian-like','win32']]:[...names.map(n=>[n,'win32']),['behavior','win32'],['duplicate-caps','win32'],['platform','linux'],['platform','darwin']];
+  const cases=process.argv.includes('--exercise-failure-cleanup')?[['cleanup-failure','win32']]:process.argv.includes('--report')?[['obsidian-like','win32']]:[...names.map(n=>[n,'win32']),['behavior','win32'],['survey','win32'],['duplicate-caps','win32'],['platform','linux'],['platform','darwin']];
   if(process.argv.includes('--apply-only')||process.argv.includes('--verbs-only')||process.argv.includes('--verbs2-only'))cases.splice(0,cases.length);
   if(!process.argv.includes('--exercise-failure-cleanup'))cases.push(['apply','win32']);
   for(const [name,platform] of cases) {

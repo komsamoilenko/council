@@ -24,6 +24,8 @@ first if no Node executable is available to run the wrapper.
 
 ## Detect and plan
 
+Unreadable optional vault subtrees are skipped with `vault_subtree_unreadable:<relative path>`; the file count excludes `.git`, `node_modules`, the job store and the ledger directory, whose counts are reported separately.
+
 Run these from the extracted project directory in a terminal. Substitute your
 vault path and the plan filename printed by `plan`:
 

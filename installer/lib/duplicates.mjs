@@ -1,8 +1,9 @@
 // Owns bounded, opt-in duplicate reporting; specification §10.2.
 import fs from 'node:fs';
 import path from 'node:path';
-import { exists, realFuture, under, sha256, linked, which } from './survey.mjs';
+import { exists, realFuture, under, sha256, linked, which, accessDenied, unreadable, vaultRequired } from './survey.mjs';
 import { safewrite } from './safewrite.mjs';
+import { attributeBatch } from './attribute-batch.mjs';
 import { fail } from './dialogue.mjs';
 
 export const DUPLICATE_NOTICE = 'Nothing was deleted or moved. Byte-identical is not the same as redundant.';
@@ -46,18 +47,25 @@ export function ignored(relative, directory, rules) {
 export async function scanDuplicates(vault, ctx, { maxFiles = 200000, maxBytes = 2 * 1024 ** 3 } = {}) {
   if (!Number.isInteger(maxFiles) || maxFiles < 1 || maxFiles > 200000) throw fail('E-USAGE', '--max-files must be between 1 and 200000.');
   if (!Number.isInteger(maxBytes) || maxBytes < 0 || maxBytes > 2 * 1024 ** 3) throw fail('E-USAGE','Hash budget cannot exceed 2 GiB.');
+  const io = ctx.io || fs, warnings = [];
+  const required = vaultRequired(vault,ctx);
   const root = fs.realpathSync(vault), files = [], notHashed = [], sizeGroups = new Map();
   const git = which('git',ctx.env).find(p => !/\.(cmd|bat|ps1)$/i.test(p));
   let count = 0, hashedBytes = 0, capped = false;
   const walk = async (directory, inherited) => {
+    try { await listing(directory,inherited); }
+    catch (e) { if (!accessDenied(e)) throw e; unreadable(root,directory,warnings,required); }
+  };
+  const listing = async (directory, inherited) => {
+    const entries = io.readdirSync(directory).sort();
+    const batch = await attributeBatch(entries.map(name => path.join(directory,name)),ctx);
     let rules = inherited;
     const ignore = path.join(directory,'.gitignore');
     if (exists(ignore) && !await linked(ignore, ctx)) {
-      const a = await ctx.attributes(ignore);
+      const a = batch.get(ignore);
       if (!(a?.offline || a?.recallOnDataAccess || (a?.bits & 0x401000)) && fs.statSync(ignore).size <= 8 * 1024 ** 2)
         rules = [...rules, ...ignoreRules(fs.readFileSync(ignore,'utf8'), slash(path.relative(root,directory)))];
     }
-    const entries = fs.readdirSync(directory).sort();
     let gitIgnored = null;
     if (git && entries.length) {
       const paths = entries.map(name => slash(path.relative(root,path.join(directory,name))));
@@ -66,13 +74,16 @@ export async function scanDuplicates(vault, ctx, { maxFiles = 200000, maxBytes =
     }
     for (const entry of entries) {
       if (capped) break;
-      const file = path.join(directory,entry), rel = slash(path.relative(root,file)), st = fs.lstatSync(file);
+      const file = path.join(directory,entry), rel = slash(path.relative(root,file));
+      let st;
+      try { st = io.lstatSync(file); }
+      catch (e) { if (!accessDenied(e)) throw e; unreadable(root,file,warnings,required); continue; }
       if (st.isSymbolicLink() || !under(file, root)) continue;
       const lower = rel.toLowerCase();
       if (entry.toLowerCase() === '.git' || entry.toLowerCase() === 'node_modules' || /^\.obsidian\/workspace/.test(lower) || /^(work\/jobs|ledger)(\/|$)/.test(lower)) continue;
       if (gitIgnored ? gitIgnored.has(rel) : ignored(rel, st.isDirectory(), rules)) continue;
       if (st.isFile()) { if (count === maxFiles) { capped = true; break; } count++; }
-      const attributes = await ctx.attributes(file);
+      const attributes = batch.get(file);
       if (attributes?.reparsePoint || (attributes?.bits & 0x400)) {
         if (attributes?.offline || attributes?.recallOnDataAccess || (attributes?.bits & 0x401000)) notHashed.push({ path: rel, reason: 'cloud-only, not hashed' });
         continue;
@@ -89,24 +100,34 @@ export async function scanDuplicates(vault, ctx, { maxFiles = 200000, maxBytes =
   const hashes = new Map();
   for (const group of sizeGroups.values()) {
     if (group.length < 2) continue;
-    for (const item of group) {
-      if (hashedBytes + item.size > maxBytes) { capped = true; notHashed.push({ path: item.path, reason: '2 GiB hash cap, not hashed' }); continue; }
-      // Recheck lstat and attributes immediately before content access.
-      const st = fs.lstatSync(item.file), a = await ctx.attributes(item.file);
-      if (!st.isFile() || st.isSymbolicLink() || st.size !== item.size || a?.offline || a?.recallOnDataAccess || a?.reparsePoint || (a?.bits & 0x401400)) { notHashed.push({ path: item.path, reason: 'changed or cloud-only, not hashed' }); continue; }
-      // Fixed-size reads prevent a concurrently growing file from exceeding either cap.
-      let bytes, fd;
-      try {
-        fd=fs.openSync(item.file,fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
-        const before=fs.fstatSync(fd);
-        if (!before.isFile() || before.size!==item.size) {notHashed.push({path:item.path,reason:'changed, not hashed'});continue;}
-        bytes=Buffer.alloc(item.size);let offset=0;
-        while(offset<bytes.length){const n=fs.readSync(fd,bytes,offset,bytes.length-offset,offset);if(!n)break;offset+=n;}
-        const after=fs.fstatSync(fd);
-        if(offset!==bytes.length || after.size!==before.size || after.mtimeMs!==before.mtimeMs){notHashed.push({path:item.path,reason:'changed, not hashed'});continue;}
-      } finally {if(fd!==undefined)fs.closeSync(fd);}
-      hashedBytes += bytes.length;
-      const hash = sha256(bytes), matches = hashes.get(hash) || []; matches.push(item.path); hashes.set(hash,matches);
+    for (let offset = 0; offset < group.length; offset += 200) {
+      const chunk = group.slice(offset,offset + 200);
+      const batch = await attributeBatch(chunk.map(item => item.file),ctx);
+      for (const item of chunk) {
+        if (hashedBytes + item.size > maxBytes) { capped = true; notHashed.push({ path: item.path, reason: '2 GiB hash cap, not hashed' }); continue; }
+        // Recheck lstat and attributes immediately before content access.
+        let st;
+        try { st = io.lstatSync(item.file); }
+        catch (e) { if (!accessDenied(e)) throw e; unreadable(root,item.file,warnings,required); continue; }
+        const a = batch.get(item.file);
+        if (!st.isFile() || st.isSymbolicLink() || st.size !== item.size || a?.offline || a?.recallOnDataAccess || a?.reparsePoint || (a?.bits & 0x401400)) { notHashed.push({ path: item.path, reason: 'changed or cloud-only, not hashed' }); continue; }
+        // Fixed-size reads prevent a concurrently growing file from exceeding either cap.
+        let bytes, fd;
+        try {
+          fd=io.openSync(item.file,fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+          const before=fs.fstatSync(fd);
+          if (!before.isFile() || before.size!==item.size) {notHashed.push({path:item.path,reason:'changed, not hashed'});continue;}
+          bytes=Buffer.alloc(item.size);let offset=0;
+          while(offset<bytes.length){const n=fs.readSync(fd,bytes,offset,bytes.length-offset,offset);if(!n)break;offset+=n;}
+          const after=fs.fstatSync(fd);
+          if(offset!==bytes.length || after.size!==before.size || after.mtimeMs!==before.mtimeMs){notHashed.push({path:item.path,reason:'changed, not hashed'});continue;}
+        } catch (e) {
+          if (!accessDenied(e)) throw e;
+          unreadable(root,item.file,warnings,required); continue;
+        } finally {if(fd!==undefined)fs.closeSync(fd);}
+        hashedBytes += bytes.length;
+        const hash = sha256(bytes), matches = hashes.get(hash) || []; matches.push(item.path); hashes.set(hash,matches);
+      }
     }
   }
   const groups = [...hashes.entries()].filter(([,paths]) => paths.length > 1).map(([hash,paths]) => ({ hash, paths: paths.sort(), keepFirst: paths.sort()[0] })).sort((a,b) => a.keepFirst < b.keepFirst ? -1 : 1);
@@ -117,10 +138,11 @@ export async function scanDuplicates(vault, ctx, { maxFiles = 200000, maxBytes =
     for (const line of lines) { const match = /^- `([^`]+)`/.exec(line); if (match) seen.set(match[1],(seen.get(match[1]) || 0) + 1); }
     for (const [file, occurrences] of seen) if (occurrences > 1) indexRepeats.push({ path: file, occurrences });
   }
-  return { schema: 1, verb: 'duplicates', vault: root, files: count, hashedBytes, capped, groups, notHashed, indexRepeats, notice: DUPLICATE_NOTICE };
+  return { schema: 1, verb: 'duplicates', vault: root, files: count, hashedBytes, capped, groups, notHashed, indexRepeats, warnings, notice: DUPLICATE_NOTICE };
 }
 export function duplicateText(report) {
   return ['# council duplicate report', '', report.notice, '', `Files: ${report.files}; bytes hashed: ${report.hashedBytes}; capped: ${report.capped}`, '',
+    ...(report.warnings || []).map(w => 'WARNING: ' + w),
     ...report.groups.flatMap(g => [`keep-first: ${g.keepFirst} (index suggestion only)`, ...g.paths.slice(1).map(p => `duplicate-of: ${p} → ${g.keepFirst}`)]),
     ...report.notHashed.map(p => `${p.path}: ${p.reason}`), ...report.indexRepeats.map(p => `INDEX.md repeated path: ${p.path} (${p.occurrences})`), ''].join('\n');
 }
