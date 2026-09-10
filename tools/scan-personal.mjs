@@ -9,19 +9,43 @@ const forbidden = [
 ].map(parts=>new RegExp(parts.join(''),'gi'));
 const userPath = new RegExp('C:'+String.raw`(?:\\+|/+)Users(?:\\+|/+)(?!<you>)[A-Za-z]`,'gi');
 const opaque = /[A-Za-z0-9_+\/-]{32,}={0,2}/g;
+const maxFileBytes=8*1024*1024,maxLineLength=64*1024;
+// Read at most one byte beyond the cap, including when a file grows during reading.
+function readBounded(file) {
+  const fd=fs.openSync(file,'r'),chunks=[];
+  let size=0;
+  try {
+    while(size<=maxFileBytes) {
+      const chunk=Buffer.alloc(Math.min(64*1024,maxFileBytes+1-size));
+      const count=fs.readSync(fd,chunk,0,chunk.length,size);
+      if(count===0)break;
+      chunks.push(chunk.subarray(0,count));size+=count;
+    }
+    return Buffer.concat(chunks,size);
+  } finally {fs.closeSync(fd);}
+}
 export function scan(root) {
   root=path.resolve(root);
   const hits=[]; let files=0,skipped=0;
-  const inspect=(s,rel,part)=>{ for(const [index,re] of [...forbidden,userPath,opaque].entries()) {
-    re.lastIndex=0;
-    let cursor=0,line=1;
-    for(const m of s.matchAll(re)) {
-      // A-50: segmented paths are candidates only with an unbroken token run.
-      if(re===opaque && !/[A-Za-z0-9+=_]{24}/.test(m[0]))continue;
-      while(cursor<m.index) { if(s.charCodeAt(cursor)===10)line++; cursor++; }
-      hits.push({file:rel,line,rule:index,part});
+  const inspect=(s,rel,part)=>{
+    const lines=s.split('\n');
+    const longLine=lines.findIndex(line=>line.length>maxLineLength);
+    if(longLine!==-1) {
+      hits.push({file:rel,line:longLine+1,rule:'unscannable',reason:'line_too_long',part});
+      return false;
     }
-  } };
+    for(const [offset,line] of lines.entries()) {
+      for(const [index,re] of [...forbidden,userPath,opaque].entries()) {
+        re.lastIndex=0;
+        for(const m of line.matchAll(re)) {
+          // A-50: segmented paths are candidates only with an unbroken token run.
+          if(re===opaque && !/[A-Za-z0-9+=_]{24}/.test(m[0]))continue;
+          hits.push({file:rel,line:offset+1,rule:index,part});
+        }
+      }
+    }
+    return true;
+  };
   const skip=(rel,rule)=>{skipped++;hits.push({file:rel,rule});};
   const walk=dir=>{
     let entries;
@@ -35,9 +59,13 @@ export function scan(root) {
     if(entry.isDirectory())walk(p);else {
       if(!entry.isFile()) {skip(rel,'unsupported');continue;}
       let bytes;
-      try {bytes=fs.readFileSync(p);}catch {skip(rel,'unreadable');continue;}
-      inspect(bytes.toString('utf8'),rel,'content');if(bytes.includes(0))inspect(bytes.toString('utf16le'),rel,'utf16');
+      try {bytes=readBounded(p);}catch {skip(rel,'unreadable');continue;}
       files++;
+      if(bytes.length>maxFileBytes) {
+        hits.push({file:rel,rule:'unscannable',reason:'file_too_large'});
+        continue;
+      }
+      if(inspect(bytes.toString('utf8'),rel,'content') && bytes.includes(0))inspect(bytes.toString('utf16le'),rel,'utf16');
     }
   }};
   walk(root);
