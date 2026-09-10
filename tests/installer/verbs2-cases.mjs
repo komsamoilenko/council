@@ -157,7 +157,7 @@ export async function verbs2Cases(make,tree) {
     const child=spawn(f.ctx.node,[path.join(f.from,'server.js')],{env:f.ctx.env,stdio:['pipe','pipe','pipe'],windowsHide:true,shell:false});
     const id=await new Promise((resolve,reject)=>{child.once('error',reject);child.stdout.once('data',d=>resolve(d.toString().trim()));child.stderr.once('data',d=>reject(new Error(d.toString())));});
     const ledger=path.join(f.vault,'ledger','spawns.jsonl');put(ledger,'{"fixture":"previous spawn"}\n');const ledgerBefore=fs.readFileSync(ledger);
-    const poll=()=>{assert.equal(child.exitCode,null);const s=require(path.join(f.ctx.dirs.app,'lib','jobstore.js'));const v=s.loadView({jobsRoot:path.join(f.vault,'work','jobs')},{},id);assert.ok(v,'old job pollable from new build');assert.equal(v.state_derived,'running');assert.equal(fs.readFileSync(ledger).equals(ledgerBefore),true);};
+    const poll=()=>{assert.equal(child.exitCode,null);const s=require(path.join(f.ctx.dirs.app,'lib','jobstore.js'));const v=s.loadView({jobsRoot:path.join(f.vault,'work','jobs'),cancelFor:jobId=>path.join(f.ctx.dirs.runtimeRoot,'control',jobId+'.cancel.json')},{},id);assert.ok(v,'old job pollable from new build');assert.equal(v.state_derived,'running');assert.equal(fs.readFileSync(ledger).equals(ledgerBefore),true);};
     try {
       await phase(f,0);for(const [p,b] of original)assert.deepEqual(fs.readFileSync(p),b);const after=migrationTree();for(const [p,b] of Object.entries(before))assert.equal(after[p],b);poll();
       await phase(f,1);for(const p of f.hosts.slice(1))assert.deepEqual(fs.readFileSync(p),original.get(p));poll();

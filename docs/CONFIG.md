@@ -30,3 +30,8 @@ with its existing test-only host rules; COUNCIL_SMOKE_RUN suppresses the periodi
 
 The launcher reads current.json, validates its version, and loads the selected server
 as the main module. It was exercised on Node v24.11.1; older versions remain unverified.
+
+The runtime root contains `control/` (locks, idempotency reservations, spawn
+counters, cancel signals and `sessions/`) and `reads/<job_id>/` (staged file
+copies). These are council-owned Z2 paths outside vault write access. The
+monthly ledger remains under `layout.ledger_dir`.

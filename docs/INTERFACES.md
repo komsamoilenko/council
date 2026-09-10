@@ -44,7 +44,7 @@ checks also apply. Optional arguments:
 | `stakes` | `normal` (default) or `high` |
 | `timeout_s` | Integer 30-1800; can only lower the selected class timeout |
 | `max_cost_usd` | Number 0.01-5; can only lower the selected class budget; Claude leg only |
-| `continue_from` | Existing job ID |
+| `continue_from` | Job ID with a council-recorded session/leg in this profile |
 | `force_round` | Boolean, default false |
 | `reason` | String, maximum 300 characters |
 | `read_paths` | Up to 5 vault paths, each at most 260 characters |
@@ -58,10 +58,16 @@ for start, adding a backend if needed (or reducing a full same-vendor list
 to a pair); echo-only lists stay unchanged. `task_class:"judge"` ignores
 `backends`, selects two Claude legs and bypasses the same-vendor check.
 Read paths are validated; files over 50 MiB refuse with `vault_unavailable`.
-The server stages files under the job directory, but the runner refuses those
-staged `--add-dir` grants because jobs are excluded. Use a permitted narrow
-vault directory for grant-bearing adapters. The Antigravity adapter is
+The server stages files under `runtimeRoot/reads/<job_id>/`; the runner accepts
+exactly that staged directory as a runtime grant. Hard links refuse with
+`path_outside_vault`, detail `hard_link`, and are excluded from search results. The Antigravity adapter is
 disabled by default; see [NOTICE](../NOTICE.md).
+
+`continue_from` requires a record under `runtimeRoot/control/sessions/`.
+Missing/unreported records refuse with `continue_from_unrecorded`; a record
+from another profile refuses with `continue_from_profile_mismatch`. Session IDs,
+backends and the round come from that record, never the vault's result/request.
+Echo continuation runs a fresh leg; it does not resume a vendor session.
 
 The class ceilings are quick: 180 s/$0.20; writing: 600 s/$0.60;
 code_review and architecture: 900 s/$1.50; research: 1200 s/$1.50;
@@ -124,7 +130,8 @@ Required `job_id`; optional `reason` (up to 300 characters) and `cascade`
 (boolean, default true). Returns the cancellation record with `job_id`,
 `state` and applicable identity/kill diagnostics, `already_terminal`,
 `orphan_suspected` or child results. It is idempotent for terminal jobs.
-Missing jobs use the not-found shape. A surviving process is an error/orphan
+The signal is `runtimeRoot/control/<job_id>.cancel.json`; a `cancel.json` in
+the job directory is ignored. Missing jobs use the not-found shape. A surviving process is an error/orphan
 report, not proof of cancellation.
 
 ## council_list

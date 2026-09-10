@@ -159,8 +159,8 @@ export async function buildPlan(options, ctx) {
   add('S4',ctx.dirs.machine,machineBytes(readJSON(ctx.dirs.machine),detect,ctx,profile,{shared:false}),{note:'merge installer-owned machine keys; preserve all other keys'});
   for (const p of ['claude','codex','gemini','echo']) dir('S5',path.join(info.runtimeRoot,'sandbox',p));
   dir('S5',path.join(info.runtimeRoot,'secrets'));
+  for (const p of ['control','control/idem','control/sessions','reads']) dir('S5',path.join(info.runtimeRoot,p));
   for (const p of [layoutPaths.jobs_dir,layoutPaths.ledger_dir]) dir(under(path.resolve(a.vault,p),info.runtimeRoot)?'S5':'S6',path.resolve(a.vault,p));
-  dir(under(path.resolve(a.vault,layoutPaths.jobs_dir),info.runtimeRoot)?'S5':'S6',path.join(path.resolve(a.vault,layoutPaths.jobs_dir),'.idem'));
   const flags = { INDEX: a.conventions || exists(path.join(a.vault,'INDEX.md')), CONVENTIONS: a.conventions };
   const targetContract = { schema:1, profile, vault_id:contract?.vault_id || randomUUID(), contract_version:1, app_version:'0.1.0', installed_at:contract?.installed_at || plan.created_at, note:'Paths and credentials are local; this contract travels with the vault.' };
   add('S6',path.join(a.vault,'.council','vault.json'),JSON.stringify(targetContract,null,2)+'\n',{note:'path-free vault contract; preserve user keys', ...(contract ? { content: undefined } : {})});

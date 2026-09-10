@@ -109,7 +109,7 @@ export async function verify(options={},overrides={}) {
   if(ctx.verifyUnregistered&&!registrations.length)registrations.push({r:{host:'migration-proof'},value:{command:ctx.node,args:[d.launcher],env:{COUNCIL_HOST:'claude-code',COUNCIL_PROFILE:m.profile}}});
   // Missing runtime dirs are drift: boot would otherwise create non-ledger state.
   const sandbox=path.join(runtime,'sandbox');
-  if(registrations.length)for(const p of [jobs,path.join(jobs,'.idem'),ledger,runtime,sandbox,...['claude','codex','gemini','echo'].map(x=>path.join(sandbox,x))])if(!exists(p)||await linked(p,ctx))drift('runtime_directory_'+'missing_or_unsafe:'+p);
+  if(registrations.length)for(const p of [jobs,path.join(runtime,'control'),path.join(runtime,'control','idem'),path.join(runtime,'control','sessions'),path.join(runtime,'reads'),ledger,runtime,sandbox,...['claude','codex','gemini','echo'].map(x=>path.join(sandbox,x))])if(!exists(p)||await linked(p,ctx))drift('runtime_directory_'+'missing_or_unsafe:'+p);
   if(!result.drift.length) {
     try{result.tier0=await (ctx.tier0||tier0)({...ctx,dirs:{...d,app},verifyMode:true,full:options.full});}catch(e){drift(e.message);}
   }

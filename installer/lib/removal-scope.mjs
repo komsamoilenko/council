@@ -29,6 +29,8 @@ export async function scope(entry,m,ctx,{purge=false}={}) {
     return [ctx.dirs.secrets,ctx.dirs.jobs,ctx.dirs.ledger].includes(p)&&under(real,runtime)||
       path.dirname(p)===backups&&under(real,realFuture(backups))&&/^[A-Za-z0-9_-]+$/.test(path.basename(p));
   }
+  // Control and staged reads are runtime state, retained by ordinary uninstall.
+  if (['control','reads'].some(n => under(p,path.join(m.runtime_root,n)))) return false;
   if(protectedPath(p,m,ctx))return false;
   const roots=[m.vault.path,m.runtime_root,path.join(ctx.dirs.root,'app'),ctx.dirs.etc,path.dirname(ctx.dirs.launcher),...(skill?[skill]:[])];
   if(!roots.some(r=>under(p,r)&&under(real,realFuture(r)))&&p!==ctx.dirs.current)return false;

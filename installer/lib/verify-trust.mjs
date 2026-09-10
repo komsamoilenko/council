@@ -15,7 +15,7 @@ export async function doctorProbe(ctx) {
     if(!attributes.has(file))attributes.set(file,await ctx.attributes(file));
     return attributes.get(file);
   }};
-  const prefetch=targets=>{
+  const prefetch=(targets,deadline=10000)=>{
     if(ctx.probe!==nativeProbe||ctx.dirs.id!=='win32')return;
     const files=new Set();
     for(const target of targets)for(let p=path.resolve(target);;p=path.dirname(p)){
@@ -25,8 +25,16 @@ export async function doctorProbe(ctx) {
     const list=[...files],probes=list.map(file=>platform.fileAttributesProbe(file,ctx.env));
     const first=probes[0];if(!first)return;
     if(probes.some(p=>p.file!==first.file||JSON.stringify(p.args.slice(0,-1))!==JSON.stringify(first.args.slice(0,-1))))throw new Error('attribute_probe_mismatch');
-    const command="$ErrorActionPreference='Stop'; @("+probes.map(p=>'(& { '+p.args.at(-1)+' })').join('\n')+') | ConvertTo-Json -Compress';
-    const result=ctx.run(first.file,[...first.args.slice(0,-1),command],{timeout:4000});
+    // Keep the provider primitive and literal-path semantics of fileAttributesProbe.
+    const literals=list.map(file=>"'"+file.replaceAll("'","''")+"'").join(',');
+    const command="$ErrorActionPreference='Stop'; @(@("+literals+") | ForEach-Object { [int64](Get-Item -LiteralPath $_ -Force -ErrorAction Stop).Attributes }) | ConvertTo-Json -Compress";
+    const args=[...first.args.slice(0,-1),command];
+    let result=ctx.run(first.file,args,{timeout:Math.max(1,Math.min(4000,deadline-(Date.now()-started)))});
+    // Fresh-profile startup can exhaust one probe budget. Retry only a timeout,
+    // once, within the existing doctor deadline; never accept missing attributes.
+    const remaining=deadline-(Date.now()-started);
+    if(result.error==='ETIMEDOUT'&&remaining>0)
+      result=ctx.run(first.file,args,{timeout:Math.min(4000,remaining)});
     if(result.status!==0)throw new Error('attribute_probe_failed');
     const bits=JSON.parse(result.stdout);
     if(!Array.isArray(bits)||bits.length!==list.length||bits.some(n=>!Number.isFinite(n)))throw new Error('attribute_probe_payload');
@@ -41,7 +49,7 @@ export async function doctorProbe(ctx) {
   if(!path.isAbsolute(vault)||!path.isAbsolute(runtime)||under(runtime,vault)||under(d.root,vault)||under(vault,d.root))throw new Error('zone_separation_failed');
   for(const p of [jobs,ledger])if(!under(p,vault)&&!under(p,runtime))throw new Error('derived_root_failed');
   const sandbox=path.join(runtime,'sandbox');
-  const directories=[jobs,path.join(jobs,'.idem'),ledger,runtime,sandbox,...['claude','codex','gemini','echo'].map(x=>path.join(sandbox,x))];
+  const directories=[jobs,path.join(runtime,'control'),path.join(runtime,'control','idem'),path.join(runtime,'control','sessions'),path.join(runtime,'reads'),ledger,runtime,sandbox,...['claude','codex','gemini','echo'].map(x=>path.join(sandbox,x))];
   prefetch([...directories,d.launcher]);
   for(const p of directories)
     if(!exists(p)||!fs.statSync(p).isDirectory()||await linked(p,scope))throw new Error('unsafe_runtime_directory');
@@ -85,7 +93,9 @@ export async function doctorProbe(ctx) {
   } finally {
     attributes.clear();
     const failures=[];
-    if(owned.length)prefetch(owned.map(item=>item.file));
+    // The existing ten-second exchange plus four-second cleanup fits the caller's
+    // fifteen-second cap. A cleanup retry shares that allowance; it never extends it.
+    if(owned.length)prefetch(owned.map(item=>item.file),14000);
     for(const {file,ino} of owned)try {
       if(path.dirname(file)!==ledger||await linked(file,scope)||fs.statSync(file).ino!==ino)throw new Error('identity_changed');
       fs.unlinkSync(file);

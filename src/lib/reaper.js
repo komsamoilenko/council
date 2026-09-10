@@ -15,6 +15,7 @@ const { performance } = require('perf_hooks');
 const jobstore = require('./jobstore.js');
 const ledger = require('./ledger.js');
 const procwin = require('../platform');
+const BACKENDS = Object.fromEntries(['claude', 'codex', 'gemini', 'echo'].map(b => [b, require('../backends/' + b)]));
 
 /** SPEC §1 timer table + §9; the ones config.json does not carry are named here. */
 const FIRST_TICK_MS = 30000;              // "30 s after boot, then reaper_period_s"
@@ -73,20 +74,26 @@ function stderrTail(view, legId) {
 /**
  * Identity-check and tree-kill every leg still marked running in state.json.
  * A leg that fails the identity check is REFUSED, never killed (SPEC §9).
- * @param {Object} ctx @param {Object} view @param {Array<Object>} [verifiedReport]
+ * @param {Object} ctx @param {Object} view @param {Object} runnerVerification
+ * @param {Array<Object>} [verifiedReport]
  * @returns {Promise<{report:Array<Object>, orphans:number}>}
  */
-async function killLegs(ctx, view, verifiedReport = []) {
+async function killLegs(ctx, view, runnerVerification, verifiedReport = []) {
   const report = [];
   let orphans = 0;
   const stateLegs = (view.state && view.state.legs) || {};
   const plans = (view.request && view.request.legs) || [];
   const runnerPid = view.state ? view.state.runner_pid : null;
-  const createdAtMs = Number(view.request && view.request.created_ms) || jobstore.jobMs(view.job_id);
+  const createdAtMs = jobstore.jobMs(view.job_id);
 
   for (const legId of Object.keys(stateLegs)) {
     const sl = stateLegs[legId] || {};
     if (!sl.pid || (sl.state !== 'running' && sl.state !== 'pending')) continue;
+    if (!runnerVerification || !runnerVerification.ok) {
+      orphans++;
+      report.push({ leg_id: legId, pid: sl.pid, verified_dead: false, tree_kill_exit: null, refused: 'pid-identity-mismatch' });
+      continue;
+    }
     const proven = verifiedReport.find(k => (k.leg || k.leg_id) === legId &&
       k.pid === sl.pid && k.verified_dead === true && !k.refused);
     if (proven) {
@@ -95,11 +102,12 @@ async function killLegs(ctx, view, verifiedReport = []) {
       continue;
     }
     const plan = plans.find((p) => p.leg_id === legId) || {};
-    const v = await procwin.verifyLeaf(ctx, sl.pid, {
-      expectedImage: plan.expected_image,
+    const backend = Object.hasOwn(BACKENDS, plan.backend) && BACKENDS[plan.backend];
+    const v = backend ? await procwin.verifyLeaf(ctx, sl.pid, {
+      expectedImage: backend.expectedImageFor(ctx),
       runnerPid,
       createdAtMs,
-    });
+    }) : { ok: false, reason: 'pid-identity-mismatch' };
     if (!v.ok) {
       if (v.reason === 'not-running' || v.reason === 'no-pid') {
         report.push({ leg_id: legId, pid: sl.pid, verified_dead: true, tree_kill_exit: null, refused: null });
@@ -107,7 +115,7 @@ async function killLegs(ctx, view, verifiedReport = []) {
         // 'identity_unevaluable' means the probe never ran — the leaf may well be alive.
         // It is refused exactly like a mismatch and counted as an orphan, never as dead.
         const refused = v.reason === 'identity_unevaluable' ? 'identity_unevaluable' : 'pid-identity-mismatch';
-        if (refused === 'identity_unevaluable') orphans++;
+        orphans++;
         report.push({ leg_id: legId, pid: sl.pid, verified_dead: false, tree_kill_exit: null, refused });
       }
       continue;
@@ -300,8 +308,8 @@ function finalizeJob(ctx, view, o) {
  * @param {Object} ctx @param {Object} view
  * @returns {Promise<{finalized:boolean, outcome:'lost', orphans:number}>}
  */
-async function finalizeLost(ctx, view) {
-  const kills = await killLegs(ctx, view);
+async function finalizeLost(ctx, view, runnerVerification) {
+  const kills = await killLegs(ctx, view, runnerVerification);
   const lostAfter = num(timing(ctx).lost_after_s, 60);
   const finalized = finalizeJob(ctx, view, {
     outcome: 'lost',
@@ -360,7 +368,7 @@ async function checkLost(ctx, view) {
     const unknown = Object.assign({}, view, { lost_verified: false, lost_unevaluable: true });
     return { finalized: false, view: unknown, unevaluable: true };
   }
-  const res = await finalizeLost(ctx, view);
+  const res = await finalizeLost(ctx, view, v);
   const fresh = reload(ctx, view.job_id) || view;
   return { finalized: res.finalized, view: fresh, orphans: res.orphans };
 }
@@ -434,7 +442,7 @@ async function cancelJobImpl(ctx, jobId, o) {
   /* 1. DONE (or a pre-spawn refusal) => nothing to do. */
   if (view.done || view.terminal) {
     const rp = view.state ? view.state.runner_pid : null;
-    const dead = rp ? !(await procwin.isAlive(ctx, rp)) : true;
+    const dead = (await procwin.livenessOf(ctx, rp)) === 'gone';
     ctx.cancelVerifiedMs = Math.round(performance.now() - ctx.cancelStarted);
     return {
       job_id: jobId, state: view.state_derived, found: true, already_terminal: true,
@@ -444,7 +452,7 @@ async function cancelJobImpl(ctx, jobId, o) {
   }
 
   /* 2. durable intent first: cancel.json ('wx') + a cancel_requested ledger row. */
-  const created = jobstore.writeNewFile(view.files.cancel, JSON.stringify({
+  const created = jobstore.writeNewFile(ctx.paths.cancelFor(view.job_id), JSON.stringify({
     v: 1, ts: new Date().toISOString(), source, reason,
   }));
   row(ctx, {
@@ -464,7 +472,7 @@ async function cancelJobImpl(ctx, jobId, o) {
     if (v2.done) {
       ctx.cancelTiming.push({ stage: 'grace', ms: Math.round(performance.now() - graceStarted) });
       const rp = v2.state ? v2.state.runner_pid : null;
-      const dead = rp ? !(await procwin.isAlive(ctx, rp)) : true;
+      const dead = (await procwin.livenessOf(ctx, rp)) === 'gone';
     ctx.cancelVerifiedMs = Math.round(performance.now() - ctx.cancelStarted);
       return {
         job_id: jobId, state: v2.state_derived, found: true, already_terminal: false,
@@ -510,7 +518,7 @@ async function cancelJobImpl(ctx, jobId, o) {
     const latest = reload(ctx, jobId);
     const payload = latest && (latest.result || latest.error);
     const verifiedReport = payload && Array.isArray(payload.kill_report) ? payload.kill_report : [];
-    kills = await killLegs(ctx, view, verifiedReport);
+    kills = await killLegs(ctx, view, rv, verifiedReport);
     if (kills.orphans > 0) orphan = true;
     for (const k of kills.report) {
       if (k.refused) {
@@ -568,12 +576,13 @@ async function cancelJobImpl(ctx, jobId, o) {
 async function enforceDeadline(ctx, view) {
   // Durable intent first, exactly as a cancel does — a wedged-but-alive runner may still
   // notice cancel.json inside its 500 ms watch and finalise itself.
-  jobstore.writeNewFile(view.files.cancel, JSON.stringify({
+  jobstore.writeNewFile(ctx.paths.cancelFor(view.job_id), JSON.stringify({
     v: 1, ts: new Date().toISOString(), source: 'reaper', reason: 'deadline backstop',
   }));
   await sleep(Math.max(CANCEL_POLL_MS, num(timing(ctx).cancel_watch_ms, 500) * 2));
   const fresh = reload(ctx, view.job_id) || view;
-  if (fresh.done) return { finalized: false, orphans: 0 };
+  if (fresh.done && !(await procwin.verifyRunner(ctx, fresh.state && fresh.state.runner_pid, { jobId: fresh.job_id })).ok)
+    return { finalized: false, orphans: 0 };
 
   const runnerPid = fresh.state ? fresh.state.runner_pid : null;
   let orphan = false;
@@ -597,7 +606,7 @@ async function enforceDeadline(ctx, view) {
     });
   }
 
-  const kills = await killLegs(ctx, fresh);
+  const kills = await killLegs(ctx, fresh, rv);
   if (kills.orphans > 0) orphan = true;
 
   const finalized = finalizeJob(ctx, fresh, {
@@ -632,10 +641,19 @@ async function tick(ctx) {
       const now = Date.now();
       const view = jobstore.loadView(ctx.paths, ctx.config, d.job_id, now);
       if (!view || !view.request) continue;
-      if (view.done || view.terminal) continue;
+      if (view.done || view.terminal || view.state_derived === 'refused') {
+        const rv = await procwin.verifyRunner(ctx, view.state && view.state.runner_pid, { jobId: view.job_id });
+        if (!rv.ok) continue;
+        view.done = false;
+        view.terminal = false;
+        view.state_derived = 'running';
+        row(ctx, { event: 'reaper_action', action: 'terminal_marker_' + 'with_live_runner', job_id: view.job_id });
+      }
       out.scanned++;
 
-      const deadlineMs = Number(view.request.deadline_ms);
+      const ceiling = jobstore.jobMs(view.job_id) + Math.min(1800, Number((ctx.config.fuses || {}).max_timeout_s) || 1800) * 1000;
+      const requestedDeadline = Number(view.request.deadline_ms);
+      const deadlineMs = Number.isFinite(requestedDeadline) && requestedDeadline > 0 ? Math.min(requestedDeadline, ceiling) : ceiling;
       if (Number.isFinite(deadlineMs) && now > deadlineMs + DEADLINE_BACKSTOP_MS) {
         const r = await enforceDeadline(ctx, view);
         if (r.finalized) out.deadline_killed++;

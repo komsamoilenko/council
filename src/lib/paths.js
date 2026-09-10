@@ -122,6 +122,7 @@ function computePaths(config) {
   const workDir = path.resolve(vault, layout.work_dir || 'work');
   const jobsRoot = path.resolve(vault, layout.jobs_dir || 'work/jobs');
   const ledgerDir = path.resolve(vault, layout.ledger_dir || 'ledger');
+  const controlDir = path.join(runtimeRoot, 'control');
   const lp = testLedgerPrefix();
   const pfx = lp.prefix;
   return {
@@ -143,7 +144,7 @@ function computePaths(config) {
     jobsRoot,
     ledgerDir,
     ledgerErrors: path.join(ledgerDir, pfx + 'ledger-errors.log'),
-    spawnsPath: path.join(ledgerDir, pfx + 'spawns.jsonl'),
+    spawnsPath: path.join(controlDir, pfx + 'spawns.jsonl'),
     /** @param {Date} d @returns {string} absolute path of [prefix]council-YYYY-MM.jsonl */
     ledgerFileFor(d) {
       const dt = d || new Date();
@@ -151,10 +152,14 @@ function computePaths(config) {
       return path.join(ledgerDir, `${pfx}council-${dt.getUTCFullYear()}-${m}.jsonl`);
     },
 
-    reaperLock: path.join(jobsRoot, '.reaper.lock'),
-    rateLock: path.join(jobsRoot, '.rate.lock'),
-    idemDir: path.join(jobsRoot, '.idem'),
+    reaperLock: path.join(controlDir, '.reaper.lock'),
+    rateLock: path.join(controlDir, '.rate.lock'),
+    idemDir: path.join(controlDir, 'idem'),
 
+    controlDir,
+    sessionsDir: path.join(controlDir, 'sessions'),
+    cancelFor(jobId) { if (!require('./jobstore').isJobId(jobId)) throw new Error('invalid_job_id'); return path.join(controlDir, jobId + '.cancel.json'); },
+    readsFor(jobId) { if (!require('./jobstore').isJobId(jobId)) throw new Error('invalid_job_id'); return path.join(runtimeRoot, 'reads', jobId); },
     runtimeRoot,
     sandboxRoot: path.join(runtimeRoot, 'sandbox'),
     /** @param {string} backend @returns {string} */
@@ -177,7 +182,7 @@ function ensureRuntimeDirs(P) {
   const created = [];
   const errors = [];
   const wanted = [
-    P.jobsRoot, P.idemDir, P.ledgerDir, P.runtimeRoot, P.sandboxRoot,
+    P.jobsRoot, P.controlDir, P.sessionsDir, path.join(P.runtimeRoot, 'reads'), P.idemDir, P.ledgerDir, P.runtimeRoot, P.sandboxRoot,
     P.sandboxFor('claude'), P.sandboxFor('codex'), P.sandboxFor('gemini'), P.sandboxFor('echo'),
   ];
   for (const d of wanted) {
@@ -234,6 +239,11 @@ function resolveVaultPath(input, P, opts) {
   const abs = platform.isAbsoluteNative(s) ? path.resolve(s) : path.resolve(P.vault, s);
   const real = realpathSafe(abs);
   if (!real) return { ok: false, reason: 'path_outside_vault', detail: 'does not exist: ' + abs };
+  try {
+    const st = fs.lstatSync(abs);
+    if (st.isSymbolicLink() || normCase(abs) !== normCase(real)) return { ok: false, reason: 'path_outside_vault', detail: 'junction_or_symlink' };
+    if (st.isFile() && st.nlink > 1) return { ok: false, reason: 'path_outside_vault', detail: 'hard_link' };
+  } catch { return { ok: false, reason: 'path_outside_vault', detail: 'unreadable' }; }
   if (!o.allowAncestors && isUnder(P.vaultReal || P.vault, real)) return { ok: false, reason: 'vault_root_not_grantable', detail: 'Name a narrower directory or file.' };
   if (!isUnder(real, P.vaultReal) && !isUnder(real, P.vault)) {
     return { ok: false, reason: 'path_outside_vault', detail: 'resolves outside the Vault: ' + real };

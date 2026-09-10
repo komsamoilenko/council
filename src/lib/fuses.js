@@ -6,7 +6,7 @@ const path = require('path');
  * be evaluated REFUSES. Owns fuse 1 (STOP files), fuse 2 (depth), the vault check, fuse 8
  * (prompt size / binary content) in `preflight`, and fuses 3/4/5 (rolling hour, rolling
  * day, concurrency) in `reserveLegs`, which reserves ALL legs of a fan-out or none under
- * `.rate.lock` by appending to `ledger\spawns.jsonl` (SPEC §2, §7).
+ * `.rate.lock` by appending to `control\spawns.jsonl` (SPEC §2, §7).
  * `spawns.jsonl` is append-only: a failed spawn is compensated by `releaseReservation`,
  * which appends a `{released:true}` row that the counters here subtract — never a delete.
  * Fuses 6/7/9 live in the runner and the adapters; the agy 20,000-char cap is per leg.
@@ -19,14 +19,8 @@ const jobstore = require('./jobstore.js');
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
-/** How far back the concurrency scan looks for live runners (a job's hard max is 1800 s). */
-const RUNNING_SCAN_HOURS = 24;
-
 /** Fuse 8: a prompt with more than this share of C0 control characters is not text. */
 const C0_LIMIT_RATIO = 0.01;
-
-/** How long a reserved, awaiting heartbeat job still counts as running. */
-const GRACE_MS = 30000;
 
 const warnedEnv = new Set();
 
@@ -70,11 +64,6 @@ function fuseConf(ctx) {
 function numOr(v, fallback) {
   const n = Number(v);
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
-}
-
-function lostAfterS(ctx) {
-  const t = (ctx && ctx.config && ctx.config.timing) || {};
-  return numOr(t.lost_after_s, 60);
 }
 
 /* ---------------- fuse 1: STOP -- */
@@ -380,7 +369,7 @@ function windowRows(rows, fromMs, toMs) {
   for (const r of rows) if (r.released) released.add(reservationKey(r));
   const out = [];
   for (const r of rows) {
-    if (r.released) continue;
+    if (r.released || r.completed) continue;
     if (released.has(reservationKey(r))) continue;
     const ms = Number(r.ms);
     if (!Number.isFinite(ms) || ms < fromMs || ms > toMs) continue;
@@ -405,48 +394,49 @@ function resetsInS(rows, fromMs, toMs, windowMs, need) {
 /* ---------------- fuse 5: running -- */
 
 /**
- * Live legs across ALL server processes: any job with no DONE whose runner heartbeat is
- * younger than `timing.lost_after_s` (plus a short grace for a job reserved seconds ago
- * whose runner has not written state.json yet).
+ * Open council-owned reservations across server processes. A recorded child stays
+ * counted until exit, even beyond the timeout; unknown liveness never frees a slot.
+ * Completion closes concurrency only; release compensates failed spawns in all windows.
  * @returns {{legs:number, jobs:string[]}}
  */
 function liveLegs(ctx, P, nowMs) {
-  const lostMs = lostAfterS(ctx) * 1000;
-  const jobs = [];
-  let legs = 0;
-  let dirs = [];
-  try { dirs = jobstore.listJobDirs(P, { since_hours: RUNNING_SCAN_HOURS, nowMs }); } catch { dirs = []; }
-  for (const j of dirs) {
-    const files = jobstore.jobFiles(j.dir);
-    if (jobstore.exists(files.done)) continue;
-    const request = jobstore.readJSON(files.request);
-    if (request && request.state === 'refused') continue;
-    const state = jobstore.readJSON(files.state);
-    let running = 0;
-    if (state) {
-      const hb = Number(state.heartbeat_ms) || jobstore.mtimeMs(files.state);
-      if (!hb || nowMs - hb > lostMs) continue;
-      if (state.state === 'finished') continue;
-      const legMap = (state.legs && typeof state.legs === 'object') ? state.legs : {};
-      for (const id of Object.keys(legMap)) {
-        const st = legMap[id] && legMap[id].state;
-        if (st === 'done' || st === 'error' || st === 'timeout' || st === 'cancelled' || st === 'skipped') continue;
-        running++;
-      }
-      if (!running) running = 1; // a live runner with no leg lines yet still occupies a slot
-    } else {
-      // No state.json yet: only the reservation grace window keeps it counted.
-      if (nowMs - j.ms > GRACE_MS) continue;
-      running = Array.isArray(request && request.legs) ? request.legs.length : 1;
-    }
-    legs += running;
-    jobs.push(j.job_id);
-  }
-  return { legs, jobs };
+  const maxMs = Math.min(1800, Number((ctx.config.fuses || {}).max_timeout_s) || 1800) * 1000;
+  const all = readSpawns(P);
+  const rows = windowRows(all, -Infinity, nowMs);
+  const closed = new Set(all.filter(r => r.completed).map(reservationKey));
+  const open = rows.filter(r => {
+    const key = reservationKey(r);
+    if (closed.has(key)) return false;
+    const file = childRecord(P, r.job_id, r.leg_id);
+    const pid = file && jobstore.readJSON(file)?.child_pid;
+    if (!Number.isInteger(pid) || pid <= 0) return Number(r.ms) >= nowMs - maxMs;
+    // Signal zero never kills. Only ESRCH proves exit; access failures and PID reuse
+    // conservatively retain the slot. PIDs come from control, never Vault state.
+    try { process.kill(pid, 0); return true; } catch (e) { return e.code !== 'ESRCH'; }
+  });
+  return { legs: open.length, jobs: [...new Set(open.map(r => r.job_id))] };
+}
+
+// Record the actual child before returning to the event loop. A runner killed before
+// its close callback cannot strand concurrency until the reservation timeout.
+function startLeg(ctx, jobId, legId, pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return;
+  const file = childRecord(ctx.paths, jobId, legId);
+  if (file) jobstore.writeNewFile(file, JSON.stringify({child_pid: pid}));
+}
+
+function childRecord(P, jobId, legId) {
+  if (!P.spawnsPath || !jobstore.isJobId(jobId) || !/^(claude|codex|gemini|echo)(?:-[1-9][0-9]*)?$/.test(legId)) return null;
+  return P.spawnsPath + '.' + jobId + '.' + legId + '.pid';
+}
+
+// Completion frees concurrency, while preserving hour/day accounting.
+function completeLeg(ctx, jobId, legId) {
+  jobstore.appendLine(ctx.paths.spawnsPath, JSON.stringify({ ms: Date.now(), job_id: jobId, leg_id: legId, completed: true }));
 }
 
 module.exports = {
   HOUR_MS, DAY_MS, C0_LIMIT_RATIO,
   stopFiles, preflight, reserveLegs, releaseReservation, snapshot,
-  fuseConf, promptCheck, readSpawns, countWindow, liveLegs,
+  startLeg, completeLeg, fuseConf, promptCheck, readSpawns, countWindow, liveLegs,
 };

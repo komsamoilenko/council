@@ -337,7 +337,7 @@ function loadView(P, config, jobId, nowMs) {
   const spawn = readJSON(f.spawn);
   const state = readJSON(f.state);
   const progress = readJSON(f.progress);
-  const cancel = readJSON(f.cancel);
+  const cancel = readJSON(P.cancelFor(jobId));
   const done = exists(f.done);
   const result = done ? readJSON(f.result) : null;
   const error = done ? readJSON(f.error) : null;

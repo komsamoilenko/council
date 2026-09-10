@@ -174,6 +174,30 @@ export function registerNewTests(test, {ROOT, HERE, TMP}) {
       {env:p.env,cwd:f.root,encoding:'utf8',windowsHide:true,timeout:15000});
     t.eq(cli.status,0,'verify trust CLI doctor bridge: '+(cli.stderr||cli.error?.message||''));
     if(cli.status===0)t.eq(JSON.parse(cli.stdout).ok,true,'verify receives doctor trust');
+    if(f.load('platform').implemented.fileAttributes) {
+      const {nativeProbe}=await import('../../installer/lib/survey.mjs');
+      const retryBefore=snapshot(f.root);
+      let attempts=0;
+      const retryCtx={...probeCtx,probe:nativeProbe,dirs:{...probeCtx.dirs,id:'win32'},run(_file,args,options){
+        attempts++;t.ok(options.timeout>0&&options.timeout<=4000,'attribute attempt retains four-second cap');
+        if(attempts===1||attempts===3)return {status:1,error:'ETIMEDOUT'};
+        const command=args.at(-1);
+        t.ok(command.includes('Get-Item -LiteralPath'),'bridge uses provider attribute probe');
+        const literals=command.split('@(@(')[1].split(') | ForEach-Object')[0];
+        return {status:0,stdout:JSON.stringify([...literals.matchAll(/'(?:[^']|'')*'/g)].map(()=>0))};
+      }};
+      const retried=await doctorProbe(retryCtx);
+      t.eq(retried.config.trust.ok,true,'one startup timeout retries and still requires doctor trust');
+      t.eq(attempts,4,'initial and cleanup timeouts each retry once with fresh attributes');
+      t.eq(JSON.stringify(snapshot(f.root)),JSON.stringify(retryBefore),'retry cleans exactly its own evidence');
+      for(const error of ['ETIMEDOUT','EACCES']) {
+        attempts=0;let failure;
+        try {await doctorProbe({...retryCtx,run(){attempts++;return {status:1,error};}});}catch(e){failure=e.message;}
+        t.eq(failure,'attribute_probe_failed','failed attributes remain fatal: '+error);
+        t.eq(attempts,error==='ETIMEDOUT'?2:1,'only timeout retries, at most once');
+        t.eq(JSON.stringify(snapshot(f.root)),JSON.stringify(retryBefore),'failed probe leaves fixture unchanged');
+      }
+    }
     json(p.configPath,{...p.config,schema:1});
     const failed=await doctorProbe(probeCtx);
     t.eq(failed.config.trust.ok,false,'doctor reports failed trust over stdio');

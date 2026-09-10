@@ -92,7 +92,7 @@ function run(file, args, timeoutMs) {
     if (!file) { resolve({ ok: false, exit: null, stdout: '', stderr: 'binary path missing', error: 'binary path missing' }); return; }
     const opts = { windowsHide: true, timeout: timeoutMs, maxBuffer: 1024 * 1024, env: toolEnv() };
     try {
-      execFile(file, args, opts, (err, stdout, stderr) => {
+      require('child_process').execFile(file, args, opts, (err, stdout, stderr) => {
         const exit = err ? (typeof err.code === 'number' ? err.code : null) : 0;
         resolve({
           ok: exit === 0,

@@ -2,7 +2,7 @@
 
 ## Trust zones and invariant
 
-**Nothing agent-writable changes what runs.** This assumes the agent's write
+**Nothing agent-writable in the vault changes what runs, what is killed, or what the fuses count.** This assumes the agent's write
 access is confined to the vault and any deliberately exposed data directories.
 Council runs as your OS user; it is not a separate OS account protecting you
 from another process with unrestricted access to that user's files.
@@ -11,10 +11,10 @@ from another process with unrestricted access to that user's files.
 |---|---|---|
 | Z0 | Installer-managed application and launcher | `%LOCALAPPDATA%\council\app` and `bin` |
 | Z1 | Installer-managed machine/profile configuration, manifests and backups | `%LOCALAPPDATA%\council\etc` |
-| Z2 | Runtime scratch and secrets; jobs/ledger when relocated | `%LOCALAPPDATA%\council\run\<id>` |
+| Z2 | Runtime control, staged reads, scratch and secrets; jobs/ledger when relocated | `%LOCALAPPDATA%\council\run\<id>` |
 | Z3 | Your notes, rules and task files; default jobs/ledger | Your vault |
 
-Keep Z0 and Z1 outside all vaults and agent write grants. Runtime paths must
+Keep Z0, Z1 and Z2 control files outside all vaults and agent write grants. Runtime paths must
 stay within the configured vault or runtime root and outside executable code.
 The path-free vault contract is discovery data, never runtime authority.
 Machine binary settings replace profile binary values in installed operation.
@@ -39,14 +39,25 @@ using `platform.sameFile`. It rebuilds a comparison spec through the existing
 backend builder, using trusted paths and class-defined tools, and requires
 exact argv, executable and prompt-transport matches. Per-leg prompt paths
 must match the expected job prompt. Every emitted `--add-dir` grant passes
-`paths.resolveVaultPath` again and must not intersect any known runtime root.
+`paths.resolveVaultPath` again and must not intersect any known runtime root,
+except exactly `runtimeRoot/reads/<this_job_id>/` for staged file copies.
 Invalid cwd, grants or shapes produce `spawn.json ... rejected: <reason>`
 without spawning that leg.
+
+The server passes reserved leg IDs on the runner argv; unreserved legs are
+refused. The first binary gate is backend-specific, with a backend-specific
+Node script allowlist. Deadlines are capped by backend/config maximum timeout.
+Gemini API model choices must resolve against configured models; its system
+header is the shared Z0 guard constant. Prompt hashes and character counts are
+computed from the actual prompt read, and flags come from the rebuilt adapter
+spec. Request host/depth come from the trusted runner environment; mutable
+boot-version metadata is not accepted as provenance.
 
 An edited `spawn.json` is a request to validate, not executable authority;
 prompts and requested model/session parameters remain untrusted data.
 Claude, Codex, Gemini API and echo send prompts over stdin. The Antigravity adapter,
-disabled by default, uses argv. Both use executable paths and argument arrays
+disabled by default, defines argv transport; the runner refuses that transport.
+Enabled legs require stdin. Spawns use executable paths and argument arrays
 with no command shell. Hosts register absolute Node plus the stable
 JavaScript launcher, never a command shim.
 
@@ -54,10 +65,12 @@ Claude runs in scratch with safe/restricted mode, empty MCP configuration,
 explicit tools and noninteractive permissions. Codex ignores user configuration
 and rules and pins a read-only sandbox, including resumed calls. Requested
 read paths must resolve inside the vault and outside excluded jobs, ledger and
-code paths. The server stages named files as copies under the job directory;
-the runner now refuses those staged grants because jobs are excluded, including
-when relocated outside the vault. No runtime-directory exception is granted.
-Use a permitted narrow vault directory for adapters emitting read grants.
+code paths. Regular files with `nlink > 1` are refused as
+`path_outside_vault` with detail `hard_link`, both for read paths and search hits.
+The server opens each staged file once, validates its descriptor against the
+resolved path, and copies from that descriptor to `runtimeRoot/reads/<job_id>/`.
+Only that job-specific staging directory is a runtime grant; other runtime
+paths, junctions and the old in-job reads directory are refused.
 Files over 50 MiB are refused during staging; the runner also checks the size
 of any file grant. Read access can expose selected content to a vendor.
 
@@ -67,7 +80,8 @@ Children receive the Windows OS-variable allowlist, a fixed system/Node PATH,
 and council-owned job/depth settings. Arbitrary inherited variables are dropped,
 including vendor key prefixes, MCP settings, `NODE_OPTIONS` and
 `RIPGREP_CONFIG_PATH`. Extra environment fields in a job cannot restore those
-variables or override PATH. Claude's updater is disabled; Codex gets its
+variables or override PATH. Non-API legs ignore `env_extra` entirely, including
+`COUNCIL_*` and `CODEX_HOME`. Claude's updater is disabled; Codex gets its
 default per-user configuration home for vendor-managed authentication.
 `CLAUDE_CONFIG_DIR` is not forwarded, which can affect relocated sign-ins.
 
@@ -99,6 +113,17 @@ restriction attempted and readability checked; failure is reported as
 
 ## Fuses, cancellation and reaper
 
+The Z2 `runtimeRoot/control/` holds `.reaper.lock`, `.rate.lock`, `idem/`,
+`spawns.jsonl`, `<job_id>.cancel.json`, and `sessions/`. Vault copies are ignored.
+The monthly ledger stays under `layout.ledger_dir` and is a record only.
+Concurrency counts open control reservations younger than the configured maximum
+timeout; completion frees concurrency without erasing hour/day spend windows.
+Failed spawns release their reservations. No job state or DONE marker affects a
+fuse counter. Older in-vault builds therefore do not share these fuse windows.
+Continuation records bind profile, backend, round and session. Session IDs are
+recorded from the runner's child pipe, never imported from vault result files.
+Echo records a completed non-resumable leg and can continue with a fresh leg.
+
 Starts check STOP files, depth, vault availability and prompt limits before
 spawning. Shared reservations count legs, not tool calls: rolling hourly,
 daily and concurrency caps apply across hosts of a profile, with a fan-out
@@ -118,7 +143,13 @@ are backend-specific; fuses do not guarantee a universal dollar ceiling.
 
 The detached runner survives host disconnection and owns heartbeat, deadline
 and ledger finalization. Cancellation verifies process identity before killing
-the tree. The reaper combines stale disk state with process identity evidence;
+the tree. Every reaper leaf kill requires an independently verified runner;
+otherwise each target is refused as `pid-identity-mismatch` and counted as an
+orphan. Leaf image comes from the backend adapter and its creation floor from
+the job ID. The runner uses its in-memory start time and adapter image for its
+own children. Terminal markers cannot hide a verified live runner in a sweep;
+that case logs `terminal_marker_` + `with_live_runner` (one action name). Death requires positive
+`gone` evidence, never a failed liveness probe. The reaper combines stale disk state with process identity evidence;
 a stale heartbeat alone is not proof of death. Unevaluable identity stays
 unverified, and a suspected survivor is reported as an orphan/error, not a
 successful cancellation. Process-tree termination is best effort.

@@ -294,7 +294,7 @@ function reservedIn(windowMs) {
   const cut = Date.now() - windowMs;
   const rows = spawnsRows();
   const released = new Set(rows.filter((r) => r.released).map((r) => r.job_id + '|' + r.leg_id));
-  return rows.filter((r) => !r.released && Number(r.ms) >= cut && !released.has(r.job_id + '|' + r.leg_id)).length;
+  return rows.filter((r) => !r.released && !r.completed && Number(r.ms) >= cut && !released.has(r.job_id + '|' + r.leg_id)).length;
 }
 
 async function pidAlive(pid) {
@@ -1519,7 +1519,7 @@ test('T-18', 'ledger integrity for everything this run wrote', async (t) => {
   // has its own `ask_degraded` event now, so this needs no filter (SPEC §10).
   const started = mine.filter((r) => r.event === 'job_started' && (r.leg_id || r.backend));
   t.eq(mine.filter((r) => r.event === 'job_started' && !r.leg_id).length, 0, 'every job_started row names a leg');
-  const spawns = spawnsRows().filter((r) => SMOKE_JOBS.has(r.job_id) && !r.released);
+  const spawns = spawnsRows().filter((r) => SMOKE_JOBS.has(r.job_id) && !r.released && !r.completed);
   const startedByJob = new Map();
   for (const r of started) startedByJob.set(r.job_id, (startedByJob.get(r.job_id) || 0) + 1);
   let mismatch = 0;

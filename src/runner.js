@@ -7,12 +7,15 @@
  * leaves with stdio pipes (prompt over stdin, then end()), holds the ONLY primary deadline
  * timer, watches cancel.json at 500 ms and the two STOP files at 5 s, and appends one
  * job_started and one job_finished ledger row per leg.
- * Usage: node runner.js <jobDir>.  Logs to <jobDir>\runner.log; stdout is unused.
+ * Usage: node runner.js <jobDir> <reservedLegId>... .  Logs to <jobDir>\runner.log; stdout is unused.
  */
 
 const child_process = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+const sessions = require('./lib/sessions');
+const { GUARD_PARAGRAPH } = require('./lib/consultation');
 
 const paths = require('./lib/paths.js');
 const guard = require('./lib/guard.js');
@@ -93,12 +96,23 @@ function main() {
   const spawnDoc = jobstore.readJSON(files.spawn);
   if (!request || !spawnDoc) { rlog('missing request.json or spawn.json — nothing to do'); process.exit(3); }
   if (request.profile !== ctx.profile) { rlog('profile_mismatch'); process.exit(5); }
-  ctx.host = (request.requester && request.requester.host) || ctx.host;
+  request.job_id = path.basename(jobDir);
+  if (!jobstore.isJobId(request.job_id)) { rlog('invalid_job_id'); process.exit(5); }
+  const reservedLegIds = process.argv.slice(3);
+  const recorded = sessions.read(ctx, request.job_id);
+  if (!recorded || recorded.profile !== ctx.profile) { rlog('unrecorded_job'); process.exit(5); }
+  request.round = recorded.round;
+  request.depth = ctx.depth;
+  request.requester = { host: ctx.host, council_version: ctx.version };
+  for (const leg of request.legs || []) {
+    const trusted = recorded.legs.find(l => l.leg_id === leg.leg_id && l.backend === leg.backend);
+    if (trusted) leg.session_id = trusted.resume_session_id;
+  }
 
   let promptText = '';
   try { promptText = fs.readFileSync(files.prompt, 'utf8'); } catch (e) { rlog('prompt.md unreadable: ' + e.message); }
 
-  const job = new Job({ ctx, jobDir, files, request, spawnDoc, promptText, rlog });
+  const job = new Job({ ctx, jobDir, files, request, spawnDoc, promptText, rlog, reservedLegIds });
   job.start();
 }
 
@@ -110,7 +124,16 @@ class Job {
   constructor(o) {
     Object.assign(this, o);
     this.startedMs = Date.now();
-    this.deadlineMs = Number(this.request.deadline_ms) || (this.startedMs + 900000);
+    const caps = (this.request.legs || []).map(l => Object.hasOwn(BACKENDS, l.backend) ? BACKENDS[l.backend].maxTimeoutS : 1800);
+    const maxTimeoutS = Math.min(1800, Number((this.ctx.config.fuses || {}).max_timeout_s) || 1800, ...caps);
+    const ceiling = this.startedMs + maxTimeoutS * 1000;
+    const deadline = Number(this.request.deadline_ms);
+    this.deadlineMs = Number.isFinite(deadline) && deadline > 0 ? Math.min(deadline, ceiling) : ceiling;
+    this.promptText = this.promptText || '';
+    this.request.prompt_chars = this.promptText.length;
+    this.request.prompt_sha256 = crypto.createHash('sha256').update(this.promptText, 'utf8').digest('hex');
+    this.request.prompt_preview = this.promptText.slice(0, 200);
+    this.derivedSpecs = new Map();
     this.legs = new Map();      // legId -> leg runtime record
     this.timers = [];
     this.finalizing = false;
@@ -125,6 +148,9 @@ class Job {
   start() {
     const t = this.ctx.config.timing || {};
     for (const legMeta of (this.request.legs || [])) {
+      if (this.reservedLegIds && (!this.reservedLegIds.includes(legMeta.leg_id) || jobstore.backendOfLeg(legMeta.leg_id) !== legMeta.backend)) {
+        this.rlog('unreserved_leg: ' + legMeta.leg_id); continue;
+      }
       this.legs.set(legMeta.leg_id, {
         leg_id: legMeta.leg_id, backend: legMeta.backend, meta: legMeta,
         pid: null, state: 'pending', started_ms: null, ended_ms: null,
@@ -159,6 +185,9 @@ class Job {
   /* ---------------- legs */
 
   spawnLeg(leg) {
+    if (this.reservedLegIds && (!this.reservedLegIds.includes(leg.leg_id) || jobstore.backendOfLeg(leg.leg_id) !== leg.backend)) {
+      leg.state = 'error'; leg.spawn_error = 'unreserved_leg'; leg.ended_ms = Date.now(); return;
+    }
     const spec = (this.spawnDoc.legs || {})[leg.leg_id];
     if (!spec) { leg.state = 'error'; leg.spawn_error = 'no spawn.json entry'; leg.ended_ms = Date.now(); return; }
     // spawn.json lives in the Vault and is written milliseconds before this read, so the
@@ -179,7 +208,7 @@ class Job {
     try { guard.assertArgvSafe(spec.args, this.ctx.config); }
     catch (e) { leg.state = 'error'; leg.spawn_error = 'guard: ' + e.message; leg.ended_ms = Date.now(); this.rlog(leg.leg_id + ' refused by guard: ' + e.message); return; }
 
-    try { this.validateSpawn(spec, leg); }
+    try { this.derivedSpecs.set(leg.leg_id, this.validateSpawn(spec, leg)); }
     catch (e) {
       leg.state = 'error'; leg.spawn_error = 'spawn.json ' + e.message; leg.ended_ms = Date.now();
       this.rlog(leg.leg_id + ' refused: ' + leg.spawn_error); return;
@@ -191,12 +220,12 @@ class Job {
       provider: api ? 'api' : null, binaries: this.ctx.config.binaries,
       backend: leg.backend, depth: Number(this.request.depth) || 0,
       jobId: this.request.job_id, rootJobId: this.request.root_job_id || this.request.job_id,
-      extra: api ? envlib.proxyEnvFor(this.ctx).env : spec.env_extra || {},
+      extra: api ? envlib.proxyEnvFor(this.ctx).env : {},
     });
     const promptText = this.promptFor(spec);
-    const args = spec.promptVia === 'argv'
-      ? spec.args.map((a) => String(a).split(PROMPT_TOKEN).join(promptText))
-      : spec.args.slice();
+    const args = spec.args.slice();
+    leg.prompt_chars = promptText.length;
+    leg.prompt_sha256 = crypto.createHash('sha256').update(promptText, 'utf8').digest('hex');
 
     const lf = this.files.leg(leg.leg_id);
     try { fs.mkdirSync(lf.dir, { recursive: true }); } catch {}
@@ -208,7 +237,7 @@ class Job {
       binary: this.binaryRow(leg, spec),
       cwd: spec.cwd, argv_flags: spec.args.filter((a) => String(a).startsWith('-')),
       env_added: envlib.addedKeys(env),
-      flags: Array.isArray(spec.flags) ? spec.flags : null,
+      flags: this.legFlags(leg.leg_id),
     });
 
     let child;
@@ -223,6 +252,7 @@ class Job {
     }
     leg.child = child;
     leg.pid = child.pid;
+    fuses.startLeg(this.ctx, this.request.job_id, leg.leg_id, child.pid);
     leg.state = 'running';
     leg.started_ms = Date.now();
     this.rlog(leg.leg_id + ' pid=' + child.pid + ' file=' + spec.file);
@@ -234,6 +264,8 @@ class Job {
       this.rlog(leg.leg_id + ' child error: ' + e.message);
     });
     child.on('close', (code, signal) => {
+      this.recordSession(leg);
+      fuses.completeLeg(this.ctx, this.request.job_id, leg.leg_id);
       if (leg.state === 'running') leg.state = code === 0 ? 'done' : 'error';
       leg.exit_code = code;
       leg.signal = signal || null;
@@ -247,7 +279,7 @@ class Job {
 
     child.stdin.on('error', () => {});
     if (spec.promptVia === 'stdin') {
-      try { if (api) secrets.writeHeader(this.ctx, child.stdin, {model:leg.meta.model,system:this.request.guard_paragraph}); child.stdin.write(promptText); } catch (e) { this.rlog(leg.leg_id + ' stdin write: ' + e.message); }
+      try { if (api) secrets.writeHeader(this.ctx, child.stdin, {model:this.apiModel(leg.meta.model),system:GUARD_PARAGRAPH}); child.stdin.write(promptText); } catch (e) { this.rlog(leg.leg_id + ' stdin write: ' + e.message); }
       try { child.stdin.end(); } catch {}
     } else {
       try { child.stdin.end(); } catch {}
@@ -270,6 +302,12 @@ class Job {
       if (spec.args[i] !== '--add-dir') continue;
       const start = ++i;
       for (; i < spec.args.length && !spec.args[i].startsWith('-'); i++) {
+        const staged = jobstore.isJobId(this.request.job_id) ? this.ctx.paths.readsFor(this.request.job_id) : null;
+        if (staged && platform.sameFile(spec.args[i], staged) && platform.sameFile(paths.realpathSafe(staged) || '', staged) && fs.statSync(staged).isDirectory()) {
+          readPaths.push(staged);
+          if (leg.backend !== 'claude') { i++; break; }
+          continue;
+        }
         const grant = paths.resolveVaultPath(spec.args[i], this.ctx.paths);
         if (!grant.ok) reject('read grant', grant.reason);
         if (runtimeRoots.some(root => {
@@ -289,6 +327,7 @@ class Job {
     const taskClass = router.CLASSES[this.request.router && this.request.router.task_class || 'general'];
     if (!taskClass) reject('args', 'unknown_task_class');
     if (leg.meta.model != null && !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(leg.meta.model)) reject('args', 'invalid_model');
+    if (leg.backend === 'gemini' && ((this.ctx.config.gemini || {}).provider || 'api') === 'api') this.apiModel(leg.meta.model);
     let expected;
     try { expected = backend.buildSpawn(this.ctx, {
       job: this.request, leg: {...leg.meta, leg_id: leg.leg_id, tools: taskClass.tools},
@@ -298,8 +337,9 @@ class Job {
     }); } catch (e) { reject('args', e.message); }
     if (!platform.sameFile(spec.file, expected.file) || JSON.stringify(spec.args) !== JSON.stringify(expected.args))
       reject('args', 'backend_shape_mismatch');
-    if (spec.promptVia !== expected.promptVia || (spec.stdinHeader || null) !== (expected.stdinHeader || null))
+    if (spec.promptVia !== 'stdin' || spec.promptVia !== expected.promptVia || (spec.stdinHeader || null) !== (expected.stdinHeader || null))
       reject('prompt transport', 'backend_shape_mismatch');
+    return expected;
   }
 
   /**
@@ -325,7 +365,8 @@ class Job {
    * @param {string} file @returns {{ok:boolean, reason?:string}}
    */
   binaryAllowed(file, args, backend) {
-    const configured = Object.values((this.ctx.config && this.ctx.config.binaries) || {});
+    const ownBins = (this.ctx.config && this.ctx.config.binaries) || {};
+    const configured = [backend === 'claude' ? ownBins.claude : backend === 'gemini' && (this.ctx.config.gemini || {}).provider === 'agy' ? ownBins.agy : ['codex', 'echo', 'gemini'].includes(backend) ? ownBins.node : null];
     const want = paths.normCase(String(file || ''));
     if (!want) return { ok: false, reason: 'empty file' };
     if (!configured.some((b) => typeof b === 'string' && paths.normCase(b) === want)) {
@@ -335,7 +376,7 @@ class Job {
     if(args && paths.normCase(file)===paths.normCase(bins.node || '')) {
       const first=args[0];
       const echo=backend==='echo' && first==='-e' && args.length===4 && args[1]===BACKENDS.echo.SCRIPT && /^echo(?:-[1-9][0-9]*)?$/.test(String(args[2])) && args[3]===JSON.stringify(platform.longLivedChildArgv());
-      if(!echo && ![bins.codex_js,bins.gemini_api_js].filter(Boolean).some(p=>paths.normCase(p)===paths.normCase(first || ''))) return {ok:false,reason:'node_script_rejected'};
+      if(!echo && ![backend === 'codex' ? bins.codex_js : backend === 'gemini' ? bins.gemini_api_js : null].filter(Boolean).some(p=>paths.normCase(p)===paths.normCase(first || ''))) return {ok:false,reason:'node_script_rejected'};
       if(!echo) {const script=guard.checkBinaryPath('spawn.script',first,this.ctx.config._machine,this.ctx.config);if(!script.ok)return script;}
     }
     const g = guard.checkBinaryPath('spawn.file', String(file), this.ctx.config._machine, this.ctx.config);
@@ -345,11 +386,11 @@ class Job {
   /**
    * SPEC §6.0 "Version drift": the version is read AGAIN at spawn, not copied from boot.
    * One `--version` per leg, zero quota, 12 s budget; a failed probe records null rather
-   * than a guess. version_at_boot comes from spawn.json (a deep council_doctor fills it).
+   * than a guess. version_at_boot is null unless a trusted source can establish it.
    * @param {Object} leg @param {Object} spec @returns {Object} the ledger row's binary{}
    */
   binaryRow(leg, spec) {
-    const atBoot = (spec.binary && spec.binary.version_at_boot) || null;
+    const atBoot = null; // Vault spawn metadata cannot establish a trusted boot version.
     const now = this.probeVersion(leg.backend);   // cached: one probe per backend per job
     const row = { path: spec.file, version: now, version_at_boot: atBoot };
     if (now && atBoot && now !== atBoot) {
@@ -369,7 +410,7 @@ class Job {
     try {
       const b = BACKENDS[backend];
       const spec = b && typeof b.versionSpec === 'function' ? b.versionSpec(this.ctx) : null;
-      if (spec && this.binaryAllowed(spec.file).ok) {
+      if (spec && this.binaryAllowed(spec.file, undefined, backend).ok) {
         const env = envlib.childEnv({ backend, depth: Number(this.request.depth) || 0, jobId: this.request.job_id, rootJobId: this.request.root_job_id || this.request.job_id });
         const r = child_process.spawnSync(spec.file, spec.args, { env, windowsHide: true, timeout: 12000, encoding: 'utf8' });
         if (r && r.status === 0 && r.stdout) v = String(r.stdout).trim().split('\n')[0].slice(0, 120);
@@ -379,11 +420,31 @@ class Job {
     return v;
   }
 
+  apiModel(model) {
+    const configured = (this.ctx.config.models || {}).gemini || (this.ctx.config.gemini || {}).model || 'gemini-3-pro';
+    const allowed = typeof configured === 'string' ? [configured] : Object.values(configured);
+    const resolved = model || allowed[0];
+    if (!allowed.includes(resolved)) throw new Error('api_model_not_configured');
+    return resolved;
+  }
+
+  recordSession(leg) {
+    // Only bytes received on our child's pipe can create continuation authority.
+    const text = Buffer.concat(leg.sessionBytes || []).toString('utf8');
+    let sid = null;
+    for (const frame of [text, ...text.split('\n')]) {
+      try { const o = JSON.parse(frame); for (const key of ['session_id', 'thread_id', 'conversation_id']) if (router.isSessionId(o[key])) sid = o[key]; } catch {}
+    }
+    if (sid || leg.backend === 'echo') sessions.report(this.ctx, this.request.job_id, leg.leg_id, sid);
+  }
+
   onChunk(leg, which, chunk) {
     const sink = which === 'out' ? leg.out : leg.err;
     if (sink) { sink.write(chunk); leg.capped = leg.capped || sink.capped; }
     if (which === 'out') leg.bytes_out += chunk.length; else leg.bytes_err += chunk.length;
     if (which === 'out') {
+      if (!leg.sessionBytes) leg.sessionBytes = [];
+      if (leg.bytes_out <= jobstore.LOG_CAP_BYTES) leg.sessionBytes.push(Buffer.from(chunk));
       const text = chunk.toString('utf8');
       for (const line of text.split('\n')) {
         const s = line.trim();
@@ -404,8 +465,8 @@ class Job {
 
   checkCancelFile() {
     if (this.finalizing || this.cancel) return;
-    if (!jobstore.exists(this.files.cancel)) return;
-    const c = jobstore.readJSON(this.files.cancel) || { source: 'unknown' };
+    if (!jobstore.exists(this.ctx.paths.cancelFor(this.request.job_id))) return;
+    const c = jobstore.readJSON(this.ctx.paths.cancelFor(this.request.job_id)) || { source: 'unknown' };
     this.cancel = c;
     this.rlog('cancel.json seen source=' + c.source);
     this.finish('cancelled');
@@ -421,7 +482,7 @@ class Job {
     const tripped = s.tripped ? s.which : null;
     if (!tripped) return;
     this.rlog('STOP file present: ' + tripped);
-    jobstore.writeNewFile(this.files.cancel, JSON.stringify({ v: 1, ts: new Date().toISOString(), source: 'stop-file', reason: tripped }));
+    jobstore.writeNewFile(this.ctx.paths.cancelFor(this.request.job_id), JSON.stringify({ v: 1, ts: new Date().toISOString(), source: 'stop-file', reason: tripped }));
     this.cancel = { source: 'stop-file', reason: tripped };
     this.finish('cancelled');
   }
@@ -511,8 +572,8 @@ class Job {
         // not pin the pid through that kill. Disk-recovered pids have no handle
         // at all. Neither case may bypass identity verification.
         const v = await procwin.verifyLeaf(killCtx, leg.pid, {
-          expectedImage: leg.meta.expected_image, runnerPid: process.pid,
-          createdAtMs: this.request.created_ms,
+          expectedImage: BACKENDS[leg.backend].expectedImageFor(this.ctx), runnerPid: process.pid,
+          createdAtMs: leg.started_ms || this.startedMs,
         }).catch((e) => ({ ok: false, reason: 'verify_failed: ' + e.message }));
         if (!v.ok) {
           // 'not-running' is a proven death; a mismatch or an unevaluable identity probe
@@ -697,8 +758,8 @@ class Job {
         effort: (legMeta && legMeta.effort) || null,
         effort_clamped_from: (legMeta && legMeta.effort_clamped_from) || null,
         started_at: new Date(this.startedMs).toISOString(),
-        prompt_chars: this.request.prompt_chars || 0,
-        prompt_sha256: this.request.prompt_sha256 || null,
+        prompt_chars: leg ? leg.prompt_chars : this.legs.get(rec && rec.leg_id)?.prompt_chars || this.request.prompt_chars,
+        prompt_sha256: leg ? leg.prompt_sha256 : this.legs.get(rec && rec.leg_id)?.prompt_sha256 || this.request.prompt_sha256,
         prompt_preview: this.request.prompt_preview || null,
         continued_from: this.request.parent_job_id || null,
       }, o.binary ? { binary: o.binary } : {},
@@ -757,9 +818,9 @@ class Job {
     return this.askDegrade;
   }
 
-  /** @param {string} legId @returns {string[]|null} the adapter's flags from spawn.json */
+  /** @param {string} legId @returns {string[]|null} the re-derived adapter flags */
   legFlags(legId) {
-    const spec = (this.spawnDoc.legs || {})[legId];
+    const spec = this.derivedSpecs.get(legId);
     return spec && Array.isArray(spec.flags) ? spec.flags : null;
   }
 

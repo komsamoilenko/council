@@ -38,7 +38,7 @@ export async function cancelDiagnostics(t, source) {
       exists: () => false, atomicWriteJSON() {}, jobMs: () => Date.now() },
     './ledger.js': { baseRow: (ctx, row) => row, append: (ctx, row) => rows.push(row) },
   });
-  const result = await reaper.cancelJob({ config: {}, paths: { binaries: {
+  const result = await reaper.cancelJob({ config: {}, paths: { cancelFor: () => 'fixture-cancel', binaries: {
     powershell: 'fixture-powershell', taskkill: 'fixture-taskkill', tasklist: 'fixture-tasklist',
   } } }, 'fixture-job');
   const d = result.cancel_timing;
@@ -66,7 +66,7 @@ export async function cancelDiagnostics(t, source) {
     ['nonboolean', { verified_dead: 'true' }, true],
   ];
   const stateLegs = Object.fromEntries(cases.map(([leg], i) => [leg, {pid: 200 + i, state: 'running'}]));
-  const before = { ...view, state: { runner_pid: 123, legs: stateLegs } };
+  const before = { ...view, request: { legs: cases.map(([leg]) => ({leg_id: leg, backend: 'echo'})) }, state: { runner_pid: 123, legs: stateLegs } };
   const killReport = cases.flatMap(([leg, proof], i) => proof ? [{leg, pid: 200 + i, ...proof}] : []);
   let latest = before;
   const probed = [], killed = [];
@@ -93,7 +93,7 @@ export async function cancelDiagnostics(t, source) {
     './jobstore.js': { loadView: () => latest, writeNewFile: () => true, jobMs: () => Date.now() },
     './ledger.js': {baseRow: (ctx, row) => row, append() {}},
   });
-  const ctx = { config: {}, paths: { binaries: {
+  const ctx = { config: {}, paths: { cancelFor: () => 'fixture-cancel', binaries: {
     powershell: 'fixture-powershell', taskkill: 'fixture-taskkill', tasklist: 'fixture-tasklist',
   } } };
   const raced = await racingReaper.cancelJob(ctx, 'fixture-job');
@@ -106,7 +106,7 @@ export async function cancelDiagnostics(t, source) {
 
   // A restart/reaper caller without a report retains every original leaf probe.
   probed.length = 0;
-  await racingReaper.killLegs(ctx, before);
+  await racingReaper.killLegs(ctx, before, {ok:true});
   t.eq(probed.join(','), cases.map((c, i) => 200 + i).join(','), 'disk-only targets keep identity checks');
 
   const runnerPlatform = load(path.join(source, 'platform/win32.js'), {
@@ -123,7 +123,7 @@ export async function cancelDiagnostics(t, source) {
     './lib/jobstore.js': {readJSON: () => null, exists: () => true},
   }, {process: {...process, on() {}, exit() {}}});
   const job = new Job({ctx, files: {}, request: {created_ms: Date.now()}, rlog() {}});
-  job.legs.set('echo', {leg_id: 'echo', pid: 456, state: 'running', meta: {expected_image: 'node.exe'},
+  job.legs.set('echo', {leg_id: 'echo', backend: 'echo', pid: 456, state: 'running', meta: {expected_image: 'node.exe'},
     child: {pid: 456, exitCode: null, signalCode: null}});
   job.writeProgress = job.writeState = () => {};
   job.parseLeg = async () => ({ok: false});

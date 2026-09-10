@@ -58,3 +58,8 @@ layouts require review; they are not silently assumed compatible.
 
 Antigravity is outside this procedure. Any unavailable-adapter diagnostic contains
 only the doctor's reason and a pointer to NOTICE.md.
+
+During a soak, an older in-vault build retains its vault-resident locks and
+`spawns.jsonl`. The installed build uses `runtimeRoot/control/`, so the two
+builds do not share fuse windows. Job directories and the monthly ledger
+remain in their configured locations.

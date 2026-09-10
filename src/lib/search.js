@@ -131,7 +131,7 @@ function excludeGlobs(includeJobs, P) {
   const base = ['.git/**'];
   if (!includeJobs && (!P || paths.isUnder(P.jobsRoot,P.vault))) base.push((P ? path.relative(P.vault,P.jobsRoot).split(path.sep).join('/') : 'work/jobs') + '/**');
   if (!P || paths.isUnder(P.ledgerDir,P.vault)) base.push((P ? path.relative(P.vault,P.ledgerDir).split(path.sep).join('/') : 'ledger') + '/**');
-  base.push('node_modules/**');
+  base.push('node_modules/**', 'bin/council/**');
   const out = [];
   for (const g of base) { out.push('!' + g); out.push('!**/' + g); }
   return out;
@@ -192,6 +192,11 @@ function classifyHit(ctx, file) {
  */
 function keepHit(ctx, file, includeJobs) {
   const P = ctx.paths;
+  const real = paths.realpathSafe(file);
+  if (!real || paths.normCase(real) !== paths.normCase(file)) return false;
+  try { const st = fs.lstatSync(file); if (st.isSymbolicLink() || (st.isFile() && st.nlink > 1)) return false; } catch { return false; }
+  if (![P.vault, P.vaultReal, ...(includeJobs ? [P.jobsRoot] : [])].filter(Boolean).some(r => paths.isUnder(real, r))) return false;
+  if ([path.join(P.vault, 'bin', 'council'), P.councilDir].filter(Boolean).some(r => paths.isUnder(real, paths.realpathSafe(r) || r))) return false;
   if (excludedRoots(P).ledger.some((r) => paths.isUnder(file, r))) return false;
   if (!includeJobs && classifyHit(ctx, file).untrusted) return false;
   return true;

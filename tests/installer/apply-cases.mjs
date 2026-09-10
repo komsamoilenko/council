@@ -64,6 +64,12 @@ export async function applyCases(root,base) {
   for(const name of names) {
     const f=await make(name),before=tree(f.dir),order=[];
     const result=await apply(f.options,{...f.ctx,boundary:async s=>order.push(s)});
+    const installedManifest=JSON.parse(fs.readFileSync(f.ctx.dirs.manifest,'utf8'));
+    for (const name of ['control','control/idem','control/sessions','reads']) {
+      const target=path.join(installedManifest.runtime_root,name);
+      assert.equal(fs.statSync(target).isDirectory(),true,'S5 creates '+name);
+      assert.ok(installedManifest.entries.some(e=>e.path===target&&e.kind==='dir'),'manifest records '+name);
+    }
     const records=fs.readFileSync(result.journal,'utf8').trim().split('\n').map(JSON.parse);
     for(const w of f.plan.steps.flatMap(s=>s.writes))if(w.backup)assert.ok(records.some(r=>r.t==='backup'&&r.path===w.path&&r.backup===w.backup),'durable backup record: '+w.path);
     checkDelta(before,tree(f.dir),f.plan);assert.ok(order.indexOf('S7')<order.indexOf('S8'));
