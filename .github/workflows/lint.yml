@@ -1,0 +1,26 @@
+name: Lint
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  lint:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.11.1'
+      - name: Node version and specification floor
+        run: |
+          node --version
+          node -e "const [major, minor] = process.versions.node.split('.').map(Number); if (major < 20 || (major === 20 && minor < 11)) process.exit(1);"
+      - name: T-00 portability lint
+        run: node tests/trust/run.mjs --lint-only
+      - name: T-24 boundaries and templates; T-27 personal data
+        run: node tests/tier0/lint.mjs
+      - name: Pure installer units
+        run: node tests/installer/unit/run.mjs
