@@ -30,11 +30,16 @@ export function storeShape(root) {
   const row=ledger.match(/const row = \{[\s\S]*?\n  \};/);
   if(!row)throw fail('E-USAGE','Previous ledger row shape is unknown.');
   return {
-    jobs:['jobDirFor','jobDateDir','jobFiles','createJobDir','loadView','appendLine','acquireLock','releaseLock'].map(n=>declaration(job,n)),
-    ledger:[tokens(row[0]),...['defaultRequester','monthFiles','readBoundedLines'].map(n=>declaration(ledger,n))],
+    jobs:Object.fromEntries(['jobDirFor','jobDateDir','jobFiles','createJobDir','appendLine','acquireLock','releaseLock'].map(n=>[n,declaration(job,n)])),
+    ledger:{row:tokens(row[0]),...Object.fromEntries(['defaultRequester','monthFiles','readBoundedLines'].map(n=>[n,declaration(ledger,n)]))},
   };
 }
 export function assertStoreShape(previous,current) {
-  try{if(JSON.stringify(storeShape(previous))!==JSON.stringify(storeShape(current)))throw new Error('mismatch');}
+  let before,after;
+  try{before=storeShape(previous);after=storeShape(current);}
   catch{throw fail('E-USAGE','Previous job-store or ledger shape differs; review compatibility before migration.');}
+  const differing=[];
+  for(const group of ['jobs','ledger'])for(const name of Object.keys(after[group]))
+    if(before[group][name]!==after[group][name])differing.push(group+'.'+name);
+  if(differing.length)throw fail('E-USAGE','store shape differs: '+differing.join(', '));
 }

@@ -50,7 +50,7 @@ side-by-side registration. A general rollback retains the installed application,
 shared skill, runtime and any frozen snapshot. It never kills a running job or
 rewrites a job, ledger row or fuse history. `--dry-run` publishes nothing.
 
-Before Phase 0 publishes anything, automatic migration compares the persisted job layout, job reader, append and lock
+Before Phase 0 publishes anything, automatic migration compares the persisted job layout, append and lock
 primitives, ledger row head, requester shape and month-file reader against this build.
 It ignores source comments and formatting and never executes the old source during
 that comparison. Store paths must match the defaults above. Different shapes or
@@ -63,3 +63,6 @@ During a soak, an older in-vault build retains its vault-resident locks and
 `spawns.jsonl`. The installed build uses `runtimeRoot/control/`, so the two
 builds do not share fuse windows. Job directories and the monthly ledger
 remain in their configured locations.
+A job started under the older build and cancelled from this one is stopped by the
+reaper's verified-runner kill path, not by the job directory's `cancel.json` file
+that the older runner polls.
