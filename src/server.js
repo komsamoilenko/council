@@ -845,6 +845,7 @@ async function doctorReport(ctx, deep) {
       path: ctx.configPath,
       expanded: Object.fromEntries(Object.entries((ctx.configMeta && ctx.configMeta.expanded) || {}).filter(([k])=>k !== 'binaries.agy')),
       trust: {
+        ok: ctx.trust.ok,
         binaries_ok: ctx.trust.binaries_ok,
         forbidden_flags_source: ctx.trust.forbidden_flags_source,
         failures: ctx.trust.failures,
@@ -870,6 +871,8 @@ async function doctorReport(ctx, deep) {
   };
   rep.warnings.push(...(ctx.configMeta.warnings || []), ...envlib.proxyEnvFor(ctx).ignored);
   rep.gemini = refreshGeminiState(ctx);
+  const agy = require('./backends/gemini-agy.js').available(ctx, {});
+  rep.agy = {ok:!!agy.ok,reason:agy.reason || 'available',notice:'see NOTICE.md'};
   if (rep.gemini.provider === 'api' && !(ctx.config.gemini || {}).pricing) rep.warnings.push('Gemini legs are cost-uncapped until pricing is configured.');
   if (ctx.testMinIgnored) rep.warnings.push(ctx.testMinIgnored);
   rep.vault_config_ignored = rep.warnings.includes('vault_config_ignored');

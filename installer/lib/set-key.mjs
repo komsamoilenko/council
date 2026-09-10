@@ -2,13 +2,14 @@
 import https from 'node:https';
 import path from 'node:path';
 import platform from '../../src/platform/index.js';
-import secrets from '../../src/lib/secrets.js';
 import {readJSON,exists,linked,realFuture,under} from './survey.mjs';
 import {safewrite} from './safewrite.mjs';
 import {fail} from './dialogue.mjs';
 import {requireTTY,confirm,secretInput} from './attended.mjs';
 export async function validateKey(endpoint,key) {
-  const url=secrets.validEndpoint(endpoint);url.pathname=url.pathname.replace(/\/$/,'')+'/models';
+  const url=new URL(endpoint);
+  if(url.protocol!=='https:' || url.username || url.password || (url.port && url.port!=='443') || url.search || url.hash || !(url.hostname==='generativelanguage.googleapis.com' || /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.aiplatform\.googleapis\.com$/.test(url.hostname))) throw new Error('gemini_endpoint_rejected');
+  url.pathname=url.pathname.replace(/\/$/,'')+'/models';
   return new Promise(resolve=>{
     const req=https.request(url,{method:'GET',headers:{'x-goog-api-key':key},timeout:15000},res=>{res.resume();resolve(res.statusCode>=200&&res.statusCode<300);});
     req.on('error',()=>resolve(false));req.on('timeout',()=>req.destroy());req.end();

@@ -16,6 +16,8 @@ export function scan(root) {
     re.lastIndex=0;
     let cursor=0,line=1;
     for(const m of s.matchAll(re)) {
+      // A-50: segmented paths are candidates only with an unbroken token run.
+      if(re===opaque && !/[A-Za-z0-9+=_]{24}/.test(m[0]))continue;
       while(cursor<m.index) { if(s.charCodeAt(cursor)===10)line++; cursor++; }
       hits.push({file:rel,line,rule:index,part});
     }

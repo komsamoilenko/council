@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import gemini from '../../src/backends/gemini-agy.js';
+import {doctorProbe} from './verify-trust.mjs';
 import platform from '../../src/platform/index.js';
 import {readJSON,exists,linked,hostPaths,realFuture,under} from './survey.mjs';
 import {sha256,entryHash,validateManifest} from './manifest.mjs';
@@ -169,10 +169,13 @@ export async function migrate(options,ctx) {
     throw fail('E-JOURNAL-OPEN');
   }
   const {output}=streams(ctx);
-  if(readJSON(path.join(from,'config.json'),{}).gemini?.provider==='agy') {
-    const state=gemini.available({config:config||{gemini:{provider:'api'}},paths:ctx.dirs});
+  const oldAgy=readJSON(path.join(from,'config.json'),{}).gemini?.provider==='agy';
+  const reportAgy=async()=>{
+    if(!oldAgy)return;
+    const state=(await doctorProbe(ctx)).agy;
     if(!state.ok&&/^agy_[a-z_]+$/.test(state.reason))output.write('gemini: '+state.reason+' — see NOTICE.md\n');
-  }
+  };
+  if(config)await reportAgy();
   if(phase===0&&!options.rollback) {
     assertStoreShape(from,source);
     const old=readJSON(path.join(from,'config.json'),{});
@@ -184,6 +187,7 @@ export async function migrate(options,ctx) {
     built.plan.file_sha256=planFileHash(built.plan);
     if(options['dry-run'])return {phase:0,dryRun:true,plan:built.plan,exitCode:0};
     requireTTY(ctx);await publishPlan(built);const r=await apply({plan:built.plan.file},ctx);
+    if(!config&&r.exitCode===0)await reportAgy();
     return {phase:0,changed:r.changed,registered:[],journal:r.journal,exitCode:r.exitCode};
   }
   if(!m)throw fail('E-NO-MANIFEST');validateManifest(m);

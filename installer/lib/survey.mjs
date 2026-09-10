@@ -5,7 +5,6 @@ import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import platform from '../../src/platform/index.js';
-import secrets from '../../src/lib/secrets.js';
 import { appdirs } from './appdirs.mjs';
 import { cloudsync } from './cloudsync.mjs';
 import { scanMarkers } from './markers.mjs';
@@ -166,8 +165,15 @@ export async function survey(options, ctx) {
   const installJSON = file => { try { return readJSON(file); } catch (e) { installErrors.push(e); return null; } };
   const localConfig = installJSON(ctx.dirs.config);
   const runtimeRoot = (localConfig?.runtime_root || ctx.dirs.runtimeRoot).replace(/%([^%]+)%/g, (_,key) => ctx.env[key] || '%'+key+'%');
-  const keyPresent = ctx.env === process.env ? secrets.present({config:{profile:options.profile || 'default',runtime_root:runtimeRoot}}) :
-    !!ctx.env.COUNCIL_GEMINI_API_KEY || ctx.dirs.id === 'win32' && exists(path.join(runtimeRoot,'secrets','gemini-api-key.dpapi'));
+  const host = ctx.platform || platform;
+  const descriptor = {profile:options.profile || 'default',runtimeRoot,binary:host.secretHelper(installJSON(ctx.dirs.machine)?.binaries || {})};
+  // secretPath validates against the caller's environment; scope the synchronous
+  // lookup to detect's supplied environment and restore it before any await.
+  const keyPresent = !!ctx.env.COUNCIL_GEMINI_API_KEY || ctx.dirs.id === 'win32' && host.implemented.secrets && (()=>{
+    const previous=process.env;
+    try {process.env={...ctx.env};return exists(host.secretPath(descriptor));}
+    finally {process.env=previous;}
+  })();
   add('logins', { codex: login ? login.status === 0 ? 'signed in' : 'not signed in' : 'not found',
     credentialPaths: Object.fromEntries(Object.entries(credentials).map(([k,p]) => [k, { path: p, present: exists(p) }])),
     geminiKey: { present: keyPresent } });

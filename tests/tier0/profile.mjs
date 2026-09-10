@@ -60,5 +60,5 @@ export function makeProfile(repo, platform, appSource = path.join(repo,'src')) {
 
 export function finishProfile(root, success) {
   if (root !== profileRoot?.root) throw new Error('unsafe_smoke_cleanup');
-  profileRoot.finish(success||process.argv.includes('--verify-profile'));
+  profileRoot.finish(success);
 }

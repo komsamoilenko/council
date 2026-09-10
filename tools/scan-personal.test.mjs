@@ -31,6 +31,24 @@ try {
   fs.readFileSync=()=>Buffer.from('Copyright (c) 2026 '+person+'\n'+person);
   assert.deepEqual(scan(root),{files:1,skipped:0,hits:[]});
 
+  // A-50 applies to token structure, regardless of file name or path.
+  fs.readdirSync=()=>[entry('candidate.txt','file')];
+  const candidates=[
+    ['AppData/Local/Microsoft/Windows/PowerShell/StartupProfileData-NonInteractive',false],
+    ['AppData/Local/Microsoft/Windows/PowerShell',false],
+    [Buffer.from('fixture base64 credential material').toString('base64'),true],
+    ['a1'.repeat(32),true],
+    ['AIza'+'b'.repeat(35),true],
+    ['ghp_'+'c'.repeat(36),true],
+    [Buffer.from(JSON.stringify({sub:'fixture',role:'scanner-test'})).toString('base64url'),true],
+    ['a'.repeat(23)+'/'+'b'.repeat(23),false],
+    ['a'.repeat(24)+'-'+'b'.repeat(8),true],
+  ];
+  for(const [value,hit] of candidates) {
+    fs.readFileSync=()=>Buffer.from(value);
+    assert.equal(scan(root).hits.some(h=>h.rule===11),hit,value);
+  }
+
   fs.readdirSync=()=>[];
   assert.ok(scan(root).hits.some(h=>h.rule==='no-files-inspected'));
   fs.readdirSync=denied;

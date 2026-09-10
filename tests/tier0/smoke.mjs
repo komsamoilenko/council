@@ -18,6 +18,8 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import { makeProfile, finishProfile } from './profile.mjs';
 import { cancelDiagnostics } from './cancel-diagnostics.mjs';
+import { registerNewTests } from './new-tests.mjs';
+import { registerHarnessChecks } from './self-check.mjs';
 
 const nativeRequire = createRequire(import.meta.url);
 const require = rel => nativeRequire(rel.startsWith('../../src/') ? path.join(HERE,rel.slice('../../src/'.length)) : rel);
@@ -1626,6 +1628,9 @@ process.on('exit', () => {
 });
 
 /* -------- main -- */
+
+registerNewTests(test, {ROOT, HERE, TMP});
+registerHarnessChecks(test, {ROOT, HERE, TMP});
 
 async function main() {
   if (OPT.list) { for (const x of TESTS) out(x.id + '\t' + x.name + (x.slow ? '\t(slow)' : '')); return 0; }
