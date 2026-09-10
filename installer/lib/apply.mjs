@@ -45,7 +45,7 @@ export async function validatePlan(plan,ctx) {
   if(plan.schema!==1||plan.profile!==ctx.dirs.profileDir.split(path.sep).at(-1)||!Array.isArray(plan.steps)||!Array.isArray(plan.registrations))throw fail('E-USAGE','Invalid plan/profile.');
   const hosts=Object.values((await import('./survey.mjs')).hostPaths(ctx)).flat();
   for(const w of plan.steps.flatMap(s=>s.writes||[])) {
-    if(!path.isAbsolute(w.path)||(!under(w.path,ctx.dirs.root)&&!under(w.path,plan.answers.vault)&&!hosts.includes(w.path)&&!(w.directory&&(under(ctx.dirs.root,w.path)||under(plan.answers.vault,w.path)))))throw fail('E-USAGE','Out-of-scope plan path: '+w.path);
+    if(!path.isAbsolute(w.path)||(!under(w.path,ctx.dirs.root)&&!under(w.path,plan.answers.vault)&&!hosts.includes(w.path)&&w.path!==ctx.dirs.skill&&!(w.directory&&under(ctx.dirs.skill,w.path))&&!(w.directory&&(under(ctx.dirs.root,w.path)||under(plan.answers.vault,w.path)))))throw fail('E-USAGE','Out-of-scope plan path: '+w.path);
     if(await linked(w.path,ctx))throw fail('E-REPARSE-TARGET',w.path);
     if(w.backup&& !under(w.backup,ctx.dirs.backups))throw fail('E-USAGE','Invalid backup path.');
   }
@@ -62,6 +62,7 @@ export async function tier0(ctx) {
   });
 }
 export function applyReport(result) {
+  if(result.migration||result.phase!==undefined)return JSON.stringify(result,null,2)+'\n';
   if(result.dryRun)return planReport(result.plan);
   return [`council-setup 0.1.0 · apply (profile: ${result.profile})`,NOTICE,
     result.unchanged?`no changes (${result.verified} entries verified)`:`Completed S0–S11; ${result.changed.length} paths published.`,
@@ -78,6 +79,12 @@ export function applyReport(result) {
 export async function apply(options,ctx) {
   if(!options.plan)throw fail('E-USAGE','apply requires --plan <file>.');
   const plan=readJSON(path.resolve(options.plan));if(!plan)throw fail('E-USAGE','Plan not found.');
+  if(plan.migration) {
+    if(options['no-register'])throw fail('E-USAGE','Migration recovery cannot defer registration.');
+    if(options['dry-run'])return {migration:true,dryRun:true,phase:plan.phase,operations:plan.ops.map(o=>({path:o.path,name:o.name}))};
+    if(!options.resume&&openJournals(ctx.dirs.journal).length)throw fail('E-JOURNAL-OPEN');
+    return (await import('./migrate.mjs')).resumeMigration(plan,ctx);
+  }
   await validatePlan(plan,ctx);
   const hash=planFileHash(plan), timestamp=path.basename(plan.file,'.json');
   if(!/^[A-Za-z0-9_-]+$/.test(timestamp)||path.resolve(plan.file)!==path.resolve(options.plan))throw fail('E-USAGE','Invalid plan location.');
@@ -95,7 +102,8 @@ export async function apply(options,ctx) {
   if(old?.corrupt||old&&old.records[0].plan_sha256!==hash)throw fail('E-PLAN-STALE','Journal/plan mismatch.');
   const previous=readJSON(ctx.dirs.manifest);
   if(previous)validateManifest(previous);
-  const noPlannedChange=previous&&!old&&!plan.steps.filter(s=>['S3','S4','S5','S6','S8'].includes(s.id)).some(s=>s.writes.length);
+  const skillSame=!plan.skill||previous?.entries.some(e=>e.path===plan.skill.path&&e.sha256===plan.skill.sha256&&e.kept===plan.skill.kept);
+  const noPlannedChange=previous&&!old&&skillSame&&!plan.steps.filter(s=>['S3','S4','S5','S6','S8'].includes(s.id)||s.id==='S9'&&s.writes.some(w=>w.path!==ctx.dirs.manifest)).some(s=>s.writes.length);
   const same=noPlannedChange||previous?.plan_sha256===hash && old && !old.open && old.records.at(-1).outcome!=='rollback';
   if(same) {
     if([...previous.entries,...previous.registrations].some(e=>entryState(e,previous).state!=='unchanged'))throw fail('E-PLAN-STALE','Installed entries changed.');
@@ -118,9 +126,9 @@ export async function apply(options,ctx) {
   if(!resume && fingerprint(detected,plan.answers['register-as']||'council').sha256!==plan.detect_fingerprint.sha256)throw fail('E-PLAN-STALE','Detection fingerprint changed.');
   const vaultInfo=await sanity(plan.answers.vault,ctx,plan.answers);
   const hostFiles=new Set(Object.values((await import('./survey.mjs')).hostPaths(ctx)).flat());
-  const owned=p=>!hostFiles.has(p)&&(under(p,ctx.dirs.root)||under(p,plan.answers.vault)); 
+  const owned=p=>!hostFiles.has(p)&&(under(p,ctx.dirs.root)||under(p,plan.answers.vault)||p===ctx.dirs.skill);
   // Content guard is separate from the existence-only fingerprint (A-33).
-  if(!resume)for(const w of plan.steps.flatMap(s=>s.writes))if(owned(w.path)&&!w.directory&&!w.transient&&w.before_sha256!==undefined&&diskHash(w.path)!==w.before_sha256)throw fail('E-PLAN-STALE',w.path);
+  if(!resume)for(const w of plan.steps.flatMap(s=>s.writes))if(owned(w.path)&&!w.directory&&!w.transient&&!w.after_stage&&w.before_sha256!==undefined&&diskHash(w.path)!==w.before_sha256)throw fail('E-PLAN-STALE',w.path);
   const probe=await probeVault(plan.answers.vault,{platform:ctx.platform||platform,io:ctx.probeIo||fs});
   await ctx.boundary?.('S0');
   fs.mkdirSync(ctx.dirs.etc,{recursive:true});
@@ -135,7 +143,7 @@ export async function apply(options,ctx) {
   const append=async r=>{await j.before(r);records.push(r);};
   const entries=new Map((previous?.entries||[]).map(e=>[e.path,e]));
   for(const entry of plan.adoptions||[])entries.set(entry.path,entry);
-  const registrations=new Map((previous?.registrations||[]).map(e=>[e.file,e]));
+  const registrations=new Map((previous?.registrations||[]).map(e=>[e.file+'::'+e.name,e]));
   const backupMap=new Map(records.filter(r=>r.t==='backup').map(r=>[r.path,r.backup]));
   for(const r of records.filter(r=>r.t==='backup')) {
     if(!exists(r.backup)) {
@@ -145,12 +153,13 @@ export async function apply(options,ctx) {
   }
   const clis=detected.blocks.find(b=>b.name==='clis').clis;
   const registerByPath=new Map(plan.registrations.map(r=>[r.path,r]));
-  const remember=undo=>{if(undo.registration){const method=records.findLast(r=>r.t==='post'&&r.path===undo.registration.file&&r.registration_method)?.registration_method;registrations.set(undo.registration.file,{...undo.registration,...(method?{method}:{})});}else if(undo.entry)entries.set(undo.entry.path,undo.entry);};
+  const remember=undo=>{if(undo.registration){const method=records.findLast(r=>r.t==='post'&&r.path===undo.registration.file&&r.registration_method)?.registration_method;registrations.set(undo.registration.file+'::'+undo.registration.name,{...undo.registration,...(method?{method}:{})});}else if(undo.entry)entries.set(undo.entry.path,undo.entry);};
   for(const record of records)if(record.t==='pre'&&record.undo)remember(record.undo);
   async function publish(w,stage,custom) {
     if(await linked(w.path,ctx))throw fail('E-REPARSE-TARGET',w.path);
     let pre=records.find(r=>r.t==='pre'&&r.path===w.path&&r.stage===stage);
     if(pre) {
+      if(records.some(r=>r.t==='pre'&&r.path===w.path&&records.indexOf(r)>records.indexOf(pre)&&r.sha256_expected===diskHash(w.path))){remember(pre.undo);return;}
       const actual=diskHash(w.path);
       const hostRecord=pre.undo?.registration;
       const live=hostRecord&&exists(w.path)?fs.readFileSync(w.path):Buffer.alloc(0);
@@ -168,7 +177,7 @@ export async function apply(options,ctx) {
     const edit=reg?.edit||(!w.directory?byteEdit(before,after):null);
     const created=!exists(w.path), backup=backupMap.get(w.path)||null;
     const block=!w.directory&&w.action==='block'?scanMarkers(after,{style:path.basename(w.path)==='.gitignore'?'hash':'markdown'}).block:null;
-    const entry=w.directory?{path:w.path,kind:'dir',created,removal:created?'rmdir_if_empty':'never'}:
+    const entry=w.directory?{path:w.path,kind:'dir',created,removal:created&&!under(w.path,ctx.dirs.backups)?'rmdir_if_empty':'never'}:
       block?{path:w.path,kind:'block',block_id:'council:contract',contract_version:1,block_sha256_eolnorm:hashBody(block.body),pre_existing:!created,backup,adopted:false,removal:'excise_block'}:
       {path:w.path,kind:'file',created,sha256:sha256(after),removal:created?'delete_if_hash_matches':'never',backup};
     const undo=pre?.undo||{entry:reg?undefined:entry,registration:reg?{...reg.record,backup}:undefined,entryValue:reg?.entry,
@@ -231,7 +240,7 @@ export async function apply(options,ctx) {
       await safewrite(journalPath,records.map(r=>JSON.stringify(r)+'\n').join(''));
     }
     await ctx.boundary?.('S1');
-    const files=plan.steps.flatMap(s=>s.writes).filter(w=>w.backup&&!backupMap.has(w.path));
+    const files=plan.steps.flatMap(s=>s.writes).filter(w=>w.backup&&!w.after_stage&&!backupMap.has(w.path));
     const backed=files.length?await backupFiles({etc:ctx.dirs.etc,profile:plan.profile,timestamp,vault:plan.answers.vault,files:files.map(w=>({source:w.path,mirror:path.relative(path.join(ctx.dirs.backups,timestamp),w.backup)})),platform:host,journal:j}):{backups:[],warnings:[]};
     result.warnings.push(...backed.warnings);result.backups.push(...backed.backups);
     for(const b of backed.backups)if(b.backup)backupMap.set(b.source,b.backup);
@@ -264,12 +273,22 @@ export async function apply(options,ctx) {
     await ctx.boundary?.('S8');
     if(options['no-register']){result.pending_hosts=[...new Set([...plan.pending_hosts,...plan.registrations.map(r=>r.surface)])];result.warnings.push('Host registration deferred by --no-register.');}
     result.registrations=[...registrations.values()];
+    for(const w of plan.steps.find(s=>s.id==='S9')?.writes.filter(w=>w.path!==ctx.dirs.manifest)||[]) {
+      if(w.stage_backup) {
+        if(!exists(w.path)) {
+          const b=await backupFiles({etc:ctx.dirs.etc,profile:plan.profile,timestamp,vault:plan.answers.vault,files:[{source:w.source,mirror:path.relative(path.join(ctx.dirs.backups,timestamp),w.path)}],platform:host,journal:j});
+          result.backups.push(...b.backups.map(x=>({source:x.source,backup:x.backup})));result.warnings.push(...b.warnings);
+        }
+        backupMap.set(w.source,w.path);
+      }else await publish(w,'S9');
+    }
+    if(plan.skill){if(diskHash(plan.skill.path)!==plan.skill.sha256)throw fail('E-PLAN-STALE','Skill changed since planning.');entries.set(plan.skill.path,plan.skill);}
     const pointer=readJSON(path.join(plan.answers.vault,'.council','vault.json'));
-    const manifest={schema:1,profile:plan.profile,server_name:plan.answers['register-as']||'council',app_version:'0.1.0',installed_at:previous?.installed_at||plan.created_at,last_apply_at:plan.created_at,plan_sha256:hash,
+    const manifest={...(previous?.migration?{migration:previous.migration}:{}),schema:1,profile:plan.profile,server_name:plan.answers['register-as']||'council',app_version:'0.1.0',installed_at:previous?.installed_at||plan.created_at,last_apply_at:plan.created_at,plan_sha256:hash,
       vault:{path:plan.answers.vault,real:realFuture(plan.answers.vault),vault_id:pointer.vault_id},runtime_root:vaultInfo.runtimeRoot,backups_dir:ctx.dirs.backups,
-      entries:[...entries.values()].filter(e=>e.path!==ctx.dirs.manifest&&e.path!==ctx.dirs.machine),registrations:result.registrations,pending_hosts:result.pending_hosts.map(host=>({host,reason:'host unavailable or deferred'})),left_alone:plan.untouched.map(p=>({path:p,why:'retained'})),observed:{node:ctx.nodeVersion},warnings:result.warnings,journal:journalPath};
+      entries:[...entries.values()].filter(e=>e.path!==ctx.dirs.manifest&&e.path!==ctx.dirs.machine&&!under(e.path,ctx.dirs.backups)),registrations:result.registrations,pending_hosts:result.pending_hosts.map(host=>({host,reason:'host unavailable or deferred'})),left_alone:plan.untouched.map(p=>({path:p,why:'retained'})),observed:{node:ctx.nodeVersion},warnings:result.warnings,journal:journalPath};
     validateManifest(manifest);
-    for(const w of plan.steps.find(s=>s.id==='S9')?.writes||[])await publish(w,'S9',w.directory?undefined:JSON.stringify(manifest,null,2)+'\n');
+    for(const w of plan.steps.find(s=>s.id==='S9')?.writes.filter(w=>w.path===ctx.dirs.manifest)||[])await publish(w,'S9',w.directory?undefined:JSON.stringify(manifest,null,2)+'\n');
     await ctx.boundary?.('S9');
     await append({t:'commit'});
     const unlocked=await releaseLock(lock,ctx.lockOptions);if(!unlocked.ok)throw Object.assign(new Error(unlocked.reason),unlocked);released=true;

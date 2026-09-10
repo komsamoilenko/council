@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {under,realFuture,linked,hostPaths,exists} from './survey.mjs';
+import {under,realFuture,linked,hostPaths,exists,readJSON} from './survey.mjs';
 
 const source=fileURLToPath(new URL('../../src/',import.meta.url));
 const vaultNames=new Set(['AGENTS.md','CLAUDE.md','INDEX.md','.gitignore','AGENTS.council.md','CLAUDE.council.md','INDEX.council.md','.council/vault.json','shared/debate-prompt.md']);
@@ -13,7 +13,10 @@ export function protectedPath(p,m,ctx) {
 export async function scope(entry,m,ctx,{purge=false}={}) {
   const p=entry.path||entry.file;
   if(typeof p!=='string'||!path.isAbsolute(p))return false;
-  const lexicalRoots=[m.vault.path,m.runtime_root,ctx.dirs.etc,path.join(ctx.dirs.root,'app'),path.dirname(ctx.dirs.launcher),path.join(ctx.dirs.home,'.claude','skills','council-setup')];
+  const recordedSkill=readJSON(ctx.dirs.machine)?.shared?.skill;
+  const skill=recordedSkill===ctx.dirs.skill?ctx.dirs.skill:null;
+  if(entry.template==='skill'&&p!==skill)return false;
+  const lexicalRoots=[m.vault.path,m.runtime_root,ctx.dirs.etc,path.join(ctx.dirs.root,'app'),path.dirname(ctx.dirs.launcher),...(skill?[skill]:[])];
   if(!entry.file&&!lexicalRoots.some(r=>under(p,r))&&p!==ctx.dirs.current)return false;
   if(await linked(p,ctx))return false;
   const real=realFuture(p),vault=realFuture(m.vault.path),runtime=realFuture(ctx.dirs.runtimeRoot);
@@ -27,7 +30,7 @@ export async function scope(entry,m,ctx,{purge=false}={}) {
       path.dirname(p)===backups&&under(real,realFuture(backups))&&/^[A-Za-z0-9_-]+$/.test(path.basename(p));
   }
   if(protectedPath(p,m,ctx))return false;
-  const roots=[m.vault.path,m.runtime_root,path.join(ctx.dirs.root,'app'),ctx.dirs.etc,path.dirname(ctx.dirs.launcher),path.join(ctx.dirs.home,'.claude','skills','council-setup')];
+  const roots=[m.vault.path,m.runtime_root,path.join(ctx.dirs.root,'app'),ctx.dirs.etc,path.dirname(ctx.dirs.launcher),...(skill?[skill]:[])];
   if(!roots.some(r=>under(p,r)&&under(real,realFuture(r)))&&p!==ctx.dirs.current)return false;
   if(entry.kind==='file'&&entry.removal==='delete_if_hash_matches') {
     if(!entry.created||!entry.sha256)return false;
@@ -36,7 +39,7 @@ export async function scope(entry,m,ctx,{purge=false}={}) {
       const parts=path.relative(path.join(ctx.dirs.root,'app'),p).split(path.sep);
       return [m.app_version,...(m.app_versions||[])].includes(parts.shift())&&exists(path.join(source,...parts))&&fs.statSync(path.join(source,...parts)).isFile();
     }
-    return [ctx.dirs.config,ctx.dirs.accounts,ctx.dirs.machine,ctx.dirs.current,ctx.dirs.launcher,...[m.app_version,...(m.app_versions||[])].map(v=>path.join(ctx.dirs.manifests,'app-'+v+'.json')),path.join(ctx.dirs.home,'.claude','skills','council-setup','SKILL.md')].includes(p);
+    return [ctx.dirs.config,ctx.dirs.accounts,ctx.dirs.machine,ctx.dirs.current,ctx.dirs.launcher,...[m.app_version,...(m.app_versions||[])].map(v=>path.join(ctx.dirs.manifests,'app-'+v+'.json')),ctx.dirs.skill].includes(p);
   }
   if(entry.kind==='block')return vaultNames.has(path.relative(m.vault.path,p).split(path.sep).join('/'));
   return true;

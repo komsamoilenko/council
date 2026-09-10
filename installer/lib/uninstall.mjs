@@ -44,7 +44,7 @@ export async function uninstall(options={},overrides={}) {
   const shared=readJSON(d.machine,{}).shared?.profiles||[];
   if(!options['keep-app']&&shared.every(id=>id===m.profile)) {
     const profiles=path.join(d.etc,'profiles'),known=new Set(candidates.map(e=>e.path||e.file));
-    const sharedPath=p=>p===d.current||p===d.launcher||under(p,path.join(d.root,'app'))||under(p,d.manifests)||under(p,path.join(d.home,'.claude','skills','council-setup'));
+    const sharedPath=p=>p===d.current||p===d.launcher||under(p,path.join(d.root,'app'))||under(p,d.manifests)||p===d.skill;
     if(exists(profiles)&&!await linked(profiles,ctx))for(const id of fs.readdirSync(profiles)) {
       if(id===m.profile||!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(id))continue;
       const file=path.join(profiles,id,'manifest.json');if(!exists(file)||await linked(file,ctx))continue;
@@ -96,7 +96,7 @@ export async function uninstall(options={},overrides={}) {
       if(!exists(p))continue;
       const origin=origins.get(e);
       if(!await scope(e,origin?.owner||m,origin?.ownerCtx||ctx)){skip('out_of_scope');continue;}
-      if(e.removal==='never'||e.removal==='never_while_profile_exists'){skip(e.removal);continue;}
+      if(e.removal==='never'||e.removal==='never_while_profile_exists'&&(remaining.length||options['keep-app']||e.kept)){skip(e.removal);continue;}
       if(under(p,m.runtime_root)){skip('runtime_kept');continue;}
       if(options['keep-vault']&&under(p,m.vault.path)){skip('keep_vault');continue;}
       if(machineEntry(e)&&(remaining.length||options['keep-app'])){skip('shared_or_keep_app');continue;}
@@ -121,7 +121,7 @@ export async function uninstall(options={},overrides={}) {
         const scan=scanMarkers(before,{style:path.basename(p)==='.gitignore'?'hash':'markdown'});
         if(!scan.ok||!scan.block||hashBody(scan.block.body)!==e.block_sha256_eolnorm){skip('hash_mismatch');continue;}
         edit=byteEdit(before,Buffer.concat([before.subarray(0,scan.block.start),before.subarray(scan.block.end)]));edit.ok=true;
-      }else if(e.removal==='delete_if_hash_matches') {
+      }else if(e.removal==='delete_if_hash_matches'||e.removal==='never_while_profile_exists'&&e.template==='skill') {
         if(sha256(before)!==e.sha256){skip('hash_mismatch');continue;}
         fs.unlinkSync(p);result.removed.push(p);continue;
       }else continue;

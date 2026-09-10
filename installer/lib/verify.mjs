@@ -106,6 +106,7 @@ export async function verify(options={},overrides={}) {
       registrations.push({r,value});
     }catch(e){drift(e.message+':'+r.host);}
   }
+  if(ctx.verifyUnregistered&&!registrations.length)registrations.push({r:{host:'migration-proof'},value:{command:ctx.node,args:[d.launcher],env:{COUNCIL_HOST:'claude-code',COUNCIL_PROFILE:m.profile}}});
   // Missing runtime dirs are drift: boot would otherwise create non-ledger state.
   const sandbox=path.join(runtime,'sandbox');
   if(registrations.length)for(const p of [jobs,path.join(jobs,'.idem'),ledger,runtime,sandbox,...['claude','codex','gemini','echo'].map(x=>path.join(sandbox,x))])if(!exists(p)||await linked(p,ctx))drift('runtime_directory_'+'missing_or_unsafe:'+p);

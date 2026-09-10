@@ -22,7 +22,7 @@ platform identifier. Methods do not resolve system helpers through PATH.
 | waitForDeath(ctx,pid,ms), treeKill(ctx,pid) | Bounded death verification and tree termination |
 | killPid(ctx,pid), childrenOf(ctx,pid) | Single-process forced termination with death verification; direct child IDs, rejecting failed probes |
 | fileAttributes(p), isCloudSynced(p), restrictToOwner(dir) | File metadata, evidence-only sync detection, owner restriction with rollback |
-| secretGet(name), secretSet(name,value), secretDelete(name) | OS store transport, using base64 encoding across the module boundary |
+| secretPath(name), secretGet(name), secretSet(name,value,writer?), secretDelete(name) | OS store transport, using base64 encoding across the module boundary |
 | rgVendorDir(codexJs), expectedImage(name), agyBinaryRoot() | Vendor executable layout and native process names |
 
 Process operations are asynchronous and ctx-first. probe returns found, gone or unknown;
@@ -31,7 +31,9 @@ ctx.paths.binaries contains validated system executables. restrictToOwner snapsh
 permissions, tightens them, checks directory listing and file creation/read/deletion,
 and restores the snapshot on failure.
 
-The secret name descriptor carries profile, runtimeRoot and binary. Encoded secret
+The secret name descriptor carries profile, runtimeRoot and binary. The optional
+secretSet writer receives only the encrypted blob and its computed path; the
+installer supplies safewrite. secretPath returns the exact single OS-store file. Encoded secret
 transport is decoded only inside lib/secrets.js. No secret is placed in helper argv.
 
 Darwin, Linux and fallback implementations supply real paths and environment functions.

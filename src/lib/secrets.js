@@ -56,4 +56,5 @@ async function runApi({input=process.stdin,output=process.stdout,args=process.ar
     });
   } catch(e) {finish(2,{status:'ERROR',response:clean(e.message,'stderr_tail')});}
 }
-module.exports={present,resolve,set,writeHeader,validEndpoint,runApi};
+function remove(ctx) { return platform.secretDelete(descriptor(ctx)); }
+module.exports={delete:remove,present,resolve,set,writeHeader,validEndpoint,runApi};

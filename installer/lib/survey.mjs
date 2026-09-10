@@ -40,14 +40,14 @@ export function which(name, env = process.env) {
 }
 export function nativeProbe(file, args, options) {
   if (!path.isAbsolute(file) || /\.(cmd|bat|ps1)$/i.test(file)) throw fail('E-CMD-SHIM');
-  const r = spawnSync(file, args, { ...options, encoding: 'utf8', shell: false, windowsHide: true, timeout: 15000, maxBuffer: 1024 * 1024 });
+  const r = spawnSync(file, args, { ...options, encoding: 'utf8', shell: false, windowsHide: true, timeout: options.timeout ?? 15000, maxBuffer: 1024 * 1024 });
   return { status: r.status ?? 1, stdout: r.stdout || '', stderr: r.stderr || '', error: r.error?.code };
 }
 export function context(overrides = {}) {
   const env = overrides.env || process.env;
   const dirs = appdirs({ env, profile: overrides.profile || 'default' });
   const ctx = { env, dirs, node: process.execPath, nodeVersion: process.version, probe: nativeProbe, now: () => new Date(), ...overrides };
-  ctx.run = (file, args, extra = {}) => ctx.probe(file, args, { ...extra, cwd: os.tmpdir(), env: ctx.env, shell: false });
+  ctx.run = (file, args, extra = {}) => ctx.probe(file, args, { ...extra, cwd: os.tmpdir(), env: extra.env || ctx.env, shell: false });
   // Do not use platform.fileAttributes here: its internal probe uses the caller's cwd.
   ctx.attributes ||= async file => {
     if (dirs.id !== 'win32') return null;

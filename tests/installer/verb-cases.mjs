@@ -87,10 +87,11 @@ export async function verbCases(make,tree) {
   }
   {
     const f=await make('empty');await apply(f.options,f.ctx);
+    const existingBackups=fs.readdirSync(f.ctx.dirs.backups).map(()=> 'no');
     put(path.join(f.ctx.dirs.backups,'stamp-a','a.txt'),'first');put(path.join(f.ctx.dirs.backups,'stamp-b','b.txt'),'second');
-    const before=tree(f.dir),wrong=await uninstall({'purge-backups':true},{...f.ctx,...terminal(['yes','yes','no','wrong'])});
+    const before=tree(f.dir),wrong=await uninstall({'purge-backups':true},{...f.ctx,...terminal(['yes',...existingBackups,'yes','no','wrong'])});
     assert.equal(wrong.exitCode,4);assert.deepEqual(tree(f.dir),before);
-    const term=terminal(['yes','yes','no','default']);const purged=await uninstall({'purge-backups':true},{...f.ctx,...term});assert.equal(purged.exitCode,0);
+    const term=terminal(['yes',...existingBackups,'yes','no','default']);const purged=await uninstall({'purge-backups':true},{...f.ctx,...term});assert.equal(purged.exitCode,0);
     assert.equal(fs.existsSync(path.join(f.ctx.dirs.backups,'stamp-a')),false);assert.equal(fs.readFileSync(path.join(f.ctx.dirs.backups,'stamp-b','b.txt'),'utf8'),'second');assert.match(term.text(),/a.txt/);assert.match(term.text(),/b.txt/);count++;
   }
   {

@@ -15,11 +15,20 @@ import { apply, applyReport } from './lib/apply.mjs';
 import { rollback } from './lib/rollback.mjs';
 import { verify } from './lib/verify.mjs';
 import { uninstall } from './lib/uninstall.mjs';
+import {installPrereqs} from './lib/install-prereqs.mjs';
+import {login} from './lib/login.mjs';
+import {setKey} from './lib/set-key.mjs';
+import {migrate} from './lib/migrate.mjs';
+import redact from '../src/lib/redact.js';
 import { update } from './lib/update.mjs';
 
 const verbs = ['detect','plan','apply','verify','update','uninstall','install-prereqs','login','migrate','rollback','set-key','duplicates','new-task','unlock'];
 const globalValues = ['profile','log'], globalSwitches = ['json','no-color','verbose'];
 const flags = {
+  'install-prereqs': {values:[],switches:['node','claude','codex','print-only']},
+  login: {values:['only'],switches:[]},
+  'set-key': {values:[],switches:['delete']},
+  migrate: {values:['from','phase','host'],switches:['dry-run','rollback']},
   verify: { values:[], switches:['fast','full','hosts'] },
   uninstall: { values:[], switches:['all','keep-app','keep-vault','purge-runtime','purge-backups','yes'] },
   update: { values:['channel','ref','keep'], switches:['check','prune-versions'] },
@@ -33,7 +42,7 @@ const flags = {
 };
 export const usage = `Usage: node installer/setup.mjs <verb> [flags]
 Verbs: ${verbs.join(' ')}
-Implemented: detect plan apply verify update uninstall rollback duplicates new-task unlock. Other verbs are not in this build.
+Implemented: all listed verbs.
 Global: --profile <id> --json --no-color --verbose --log <file>
 detect: --vault <path> --duplicates --out <file>
 plan: --vault <path> --merge block|sidecar|none|ask --conventions --relocate-runtime
@@ -44,6 +53,10 @@ new-task: <slug> --vault <path> --agents claude,codex,gemini
 unlock: --force-unlock (recover stale setup lock/claim; live owners stay refused)
 apply: --plan <file> --yes --resume
 rollback: --journal <timestamp>
+install-prereqs: --node --claude --codex --print-only (TTY only)
+login: --only claude|codex|gemini
+set-key: --delete (no key argument; hidden terminal input or stdin)
+migrate: --from <old bin/council> --phase 0|1|2|3 --host <surface> --dry-run --rollback
 --log is accepted but does not write: detect/plan permit only their declared output files.
 Exit codes: 0 ok; 1 step failed; 2 usage/precondition; 3 stale plan; 4 conflict;
             5 open journal/declined; 6 unsupported platform; 7 verify drift.
@@ -64,7 +77,7 @@ export function parse(argv) {
     if(verb==='update'&&key==='rollback'){options.rollback=argv[i+1]&&!argv[i+1].startsWith('--')?argv[++i]:true;continue;}
     if (switches.has(key)) options[key] = true;
     else if (values.has(key) && argv[i+1] !== undefined && !argv[i+1].startsWith('--')) options[key] = argv[++i];
-    else throw fail('E-USAGE','Unknown flag or missing value: '+arg);
+    else throw fail('E-USAGE',verb==='set-key'?'Unknown flag or missing value.':'Unknown flag or missing value: '+arg);
   }
   if (positional.length !== (verb === 'new-task' ? 1 : 0)) throw fail('E-USAGE','Unexpected or missing positional argument.');
   if (options.profile && !/^[a-z0-9][a-z0-9_-]{0,31}$/.test(options.profile)) throw fail('E-USAGE','Invalid --profile id.');
@@ -81,6 +94,10 @@ export async function run(argv, overrides = {}) {
     options = {...loadAnswers(command.options.answers),...command.options};
     const ctx = context({...overrides,profile:options.profile || 'default'});
     let result, human, exitCode = 0;
+    if(['install-prereqs','login','set-key','migrate'].includes(command.verb)) {
+      result=await ({'install-prereqs':installPrereqs,login,'set-key':setKey,migrate}[command.verb])(options,ctx);
+      stdout(JSON.stringify(redact.value(result),null,options.json?undefined:2)+'\n');return result.exitCode||0;
+    }
     if(['verify','uninstall','update'].includes(command.verb)) {
       result=await ({verify,uninstall,update}[command.verb])(options,ctx);
       stdout(JSON.stringify(result, null, options.json?undefined:2)+'\n');
@@ -138,7 +155,7 @@ export async function run(argv, overrides = {}) {
     stdout(options.json ? JSON.stringify(result)+'\n' : human);
     return exitCode;
   } catch (error) {
-    const item = errorObject(error,options.verbose);
+    const item = redact.value(errorObject(error,options.verbose));
     if (options.json) (reportPrinted ? stderr : stdout)(JSON.stringify({error:item,exitCode:item.exitCode})+'\n');
     else stderr(`${item.code}: ${item.what}. ${item.why || ''}. ${item.fix || ''}\n${item.detail ? item.detail+'\n' : ''}${options.verbose ? item.stack+'\n' : ''}`);
     return item.exitCode >= 0 && item.exitCode <= 7 ? item.exitCode : 1;

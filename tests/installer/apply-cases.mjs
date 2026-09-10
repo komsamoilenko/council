@@ -40,6 +40,13 @@ export async function applyCases(root,base) {
       if(args.includes('mcp'))return {status:0,stdout:'fixture readback'};
       return originalProbe(file,args,opts);
     };
+    if(name==='previous-install') {
+      const old=path.join(vault,'bin','council','server.js');
+      for(const file of [path.join(env.CLAUDE_CONFIG_DIR,'.claude.json'),path.join(env.APPDATA,'Claude','claude_desktop_config.json')]) {
+        const before=fs.readFileSync(file);put(file,spliceJsonEntry(before,'council',{command:ctx.node,args:[old],env:{}}).bytes);
+      }
+      fs.appendFileSync(path.join(env.CODEX_HOME,'config.toml'),'[mcp_servers.council]\ncommand = '+JSON.stringify(ctx.node)+'\nargs = ['+JSON.stringify(old)+']\n');
+    }
     await prepare(ctx,vault);
     const built=await buildPlan({vault,hosts,json:true,merge:['agents-marker-no-version','agents-two-blocks'].includes(name)?'none':'block'},ctx);
     await publishPlan(built);
@@ -49,9 +56,10 @@ export async function applyCases(root,base) {
   const checkDelta=(before,after,plan)=>{
     const declared=new Set(plan.steps.flatMap(s=>s.writes).filter(w=>!w.transient).map(w=>w.path));
     for(const p of new Set([...Object.keys(before),...Object.keys(after)]))if(before[p]!==after[p])assert.ok(declared.has(p),'undeclared change: '+p);
-    for(const w of plan.steps.flatMap(s=>s.writes))if(!w.transient && !w.directory && w.content!==undefined && !['S0','S1'].includes(plan.steps.find(s=>s.writes.includes(w)).id))assert.equal(after[w.path],Buffer.from(w.content).toString('base64'),'plan bytes: '+w.path);
-    for(const w of plan.steps.flatMap(s=>s.writes))if(w.backup)assert.equal(after[w.backup],before[w.path],'backup canary: '+w.path);
+    for(const w of plan.steps.flatMap(s=>s.writes))if(!w.transient && !w.directory && w.content!==undefined && plan.steps.flatMap(s=>s.writes).findLast(n=>n.path===w.path)===w && !['S0','S1'].includes(plan.steps.find(s=>s.writes.includes(w)).id))assert.equal(after[w.path],Buffer.from(w.content).toString('base64'),'plan bytes: '+w.path);
+    for(const w of plan.steps.flatMap(s=>s.writes))if(w.backup)assert.equal(after[w.backup],w.after_stage?Buffer.from(plan.steps.find(s=>s.id===w.after_stage).writes.find(n=>n.path===w.path).content).toString('base64'):before[w.path],'backup canary: '+w.path);
   };
+  if(process.argv.includes('--verbs2-only')) {const {verbs2Cases}=await import('./verbs2-cases.mjs');await verbs2Cases(make,tree);return;}
   if(process.argv.includes('--verbs-only')) {const {verbCases}=await import('./verb-cases.mjs');await verbCases(make,tree);return;}
   for(const name of names) {
     const f=await make(name),before=tree(f.dir),order=[];
@@ -252,5 +260,6 @@ export async function applyCases(root,base) {
     await assert.rejects(rollback({yes:true,journal:stamp},f.ctx),e=>e.exitCode===5&&e.code==='E-JOURNAL-OPEN');count++;
   }
   const {verbCases}=await import('./verb-cases.mjs');await verbCases(make,tree);
+  const {verbs2Cases}=await import('./verbs2-cases.mjs');await verbs2Cases(make,tree);
   process.stdout.write('PASS apply/rollback ('+count+' checks)\n');
 }

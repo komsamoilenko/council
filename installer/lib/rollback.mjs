@@ -18,7 +18,9 @@ export async function rollback(options,ctx) {
   if(await linked(file,ctx))throw fail('E-REPARSE-TARGET',file);
   const state=readJournal(file), begin=state.records[0];
   if(state.corrupt)throw fail('E-JOURNAL-OPEN','Corrupt journal; manual recovery required.');
-  const plan=readJSON(begin.plan);await validatePlan(plan,ctx);
+  const plan=readJSON(begin.plan);
+  if(begin.migration)return (await import('./migrate.mjs')).resumeMigration(plan,ctx,{reverse:true});
+  await validatePlan(plan,ctx);
   if(begin.plan_sha256!==planFileHash(plan))throw fail('E-PLAN-STALE','Journal/plan mismatch.');
   const allowed=new Set(plan.steps.flatMap(s=>s.writes).map(w=>w.path));
   for(const r of state.records)if(r.t==='pre'&&(!allowed.has(r.path)||!r.undo||r.undo.entry&&r.undo.entry.path!==r.path||r.undo.registration&&r.undo.registration.file!==r.path))throw fail('E-USAGE','Out-of-scope journal intent.');

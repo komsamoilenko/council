@@ -4,6 +4,7 @@ import path from 'node:path';
 import readline from 'node:readline/promises';
 
 const catalogue = {
+  'E-SETKEY-NON-TTY': [2,'Key deletion requires a terminal','each key deletion needs attended confirmation','Run set-key --delete in an interactive terminal.'],
   'E-NODE-MISSING': [2, 'Node was not found', 'the installer needs Node', 'Install Node LTS from https://nodejs.org/en/download, then re-run.'],
   'E-NODE-OLD': [2, 'Node is below 20.11', 'this runtime is unsupported', 'Install Node LTS, then re-run.'],
   'E-PLATFORM': [6, 'Platform capabilities are not implemented', '0.1.0 supports process supervision on Windows', 'Use Windows or plan with --allow-unsupported-platform.'],

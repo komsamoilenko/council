@@ -5,10 +5,18 @@ import { fileURLToPath } from 'node:url';
 import { renderVault, layout } from '../../installer/lib/render.mjs';
 import { canonicalBlock, scanMarkers } from '../../installer/lib/markers.mjs';
 
-export const names = ['empty','obsidian-like','git-repo','conflicting-agents','agents-with-protocol-text','agents-with-our-block','agents-marker-in-codefence','agents-marker-no-version','agents-two-blocks','agents-crlf','cloud-synced','transplanted','duplicates'];
+export const names = ['previous-install','empty','obsidian-like','git-repo','conflicting-agents','agents-with-protocol-text','agents-with-our-block','agents-marker-in-codefence','agents-marker-no-version','agents-two-blocks','agents-crlf','cloud-synced','transplanted','duplicates'];
 export function put(file, text = '') { fs.mkdirSync(path.dirname(file), {recursive:true}); fs.writeFileSync(file,text); }
 export function fixture(root, name, ctx) {
   const vault = name==='cloud-synced'?path.join(root,'cloud','vault'):path.join(root,'vault'); fs.mkdirSync(vault,{recursive:true});
+  if(name==='previous-install') {
+    const source=fileURLToPath(new URL('../../src/',import.meta.url));
+    fs.cpSync(source,path.join(vault,'bin','council'),{recursive:true});
+    put(path.join(vault,'bin','council','server.js'),fs.readFileSync(fileURLToPath(new URL('../helpers/previous-server.cjs',import.meta.url))));
+    put(path.join(vault,'bin','council','config.json'),JSON.stringify({layout:{jobs_dir:'work/jobs',ledger_dir:'ledger'}}));
+    for(const n of ['AGENTS.md','CLAUDE.md','INDEX.md','.gitignore'])put(path.join(vault,n),'Previous council contract: council_start\n');
+    fs.mkdirSync(path.join(vault,'work','jobs','.idem'),{recursive:true});fs.mkdirSync(path.join(vault,'ledger'),{recursive:true});
+  }
   if (name === 'obsidian-like') {
     put(path.join(vault,'.obsidian','app.json'),'{}\n'); put(path.join(vault,'.obsidian','workspace.json'),'private workspace\n');
     put(path.join(vault,'note.md'),'# My notes\n'); put(path.join(vault,'AGENTS.md'),'# My rules\n\nKeep my notes intact.\n');

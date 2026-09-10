@@ -32,7 +32,7 @@ module.exports = function make(id) {
     killPid: asyncFail('proc'), childrenOf: asyncFail('proc'), probe: asyncFail('proc'), inspect: asyncFail('proc'), isAlive: asyncFail('proc'), livenessOf: asyncFail('proc'), verifyRunner: asyncFail('proc'), verifyLeaf: asyncFail('proc'), waitForDeath: asyncFail('proc'), treeKill: asyncFail('proc'), spawnDetachedOpts: fail('proc'),
     fileAttributes: asyncFail('fileAttributes'), restrictToOwner: asyncFail('fileAttributes'),
     isCloudSynced: async p => ({ synced: /(?:^|\/)(?:Dropbox|OneDrive|Google Drive|Mobile Documents)(?:\/|$)/i.test(p), evidence: ['path-name heuristic'], unknown: true }),
-    secretGet: fail('secrets'), secretSet: fail('secrets'), secretDelete: fail('secrets'),
+    secretPath: fail('secrets'), secretGet: fail('secrets'), secretSet: fail('secrets'), secretDelete: fail('secrets'),
     hostConfigPaths: () => ({ claudeCode: path.join(homeDir(), '.claude.json'), codex: path.join(homeDir(), '.codex/config.toml'), claudeDesktop: id === 'darwin' ? [path.join(homeDir(), 'Library/Application Support/Claude', 'claude_desktop_config.json')] : [] }),
     planUsagePath: () => id === 'darwin' ? path.join(homeDir(),'Library/Application Support','Claude','plan-usage-history.json') : null,
     secretHelper: () => null,

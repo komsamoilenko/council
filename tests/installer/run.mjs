@@ -135,7 +135,7 @@ if (process.argv.includes('--child')) {
         assert.equal((await invoke(['unlock','--json'])).code,2);
       });
       await test('parser closed verbs and flags',async()=>{
-        for(const verb of ['install-prereqs','login','migrate','set-key']){const r=await invoke([verb,'--json']);assert.equal(r.code,2);assert.ok(r.out.includes('not in this build'));assert.ok(usage.includes(verb));}
+        for(const verb of ['install-prereqs','login','migrate','set-key']){const r=await invoke([verb,'--json']);assert.equal(r.code,2);assert.ok(JSON.parse(r.out).error.code);assert.ok(usage.includes(verb));}
         for(const verb of ['verify','update','uninstall']){const r=await invoke([verb,'--json']);assert.equal(r.code,4);assert.equal(JSON.parse(r.out).reason,'E-NO-MANIFEST');assert.ok(usage.includes(verb));}
         for(const verb of ['apply','rollback'])assert.equal((await invoke([verb,'--json'])).code,2);
         for(const args of [['bogus'],['detect','--bad'],['plan','--vault'],['detect','--profile','../bad'],['new-task','../bad','--vault',vault]]) assert.equal((await invoke(args)).code,2);
@@ -264,7 +264,7 @@ if (process.argv.includes('--child')) {
   const invalid=spawnSync(process.execPath,[self,'--child','empty'],{env:{...process.env,COUNCIL_TEST_ROOT:''},encoding:'utf8',windowsHide:true});
   if(invalid.status===2 && invalid.stderr.includes('REFUSED: installer child is not sandboxed')){passed++;process.stdout.write('PASS sandbox pre-flight refusal\n');}else{failed++;process.stdout.write('FAIL sandbox pre-flight refusal\n');}
   const cases=process.argv.includes('--exercise-failure-cleanup')?[['cleanup-failure','win32']]:process.argv.includes('--report')?[['obsidian-like','win32']]:[...names.map(n=>[n,'win32']),['behavior','win32'],['duplicate-caps','win32'],['platform','linux'],['platform','darwin']];
-  if(process.argv.includes('--apply-only')||process.argv.includes('--verbs-only'))cases.splice(0,cases.length);
+  if(process.argv.includes('--apply-only')||process.argv.includes('--verbs-only')||process.argv.includes('--verbs2-only'))cases.splice(0,cases.length);
   if(!process.argv.includes('--exercise-failure-cleanup'))cases.push(['apply','win32']);
   for(const [name,platform] of cases) {
     const root=fs.mkdtempSync(path.join(tempBase,'installer-'));
@@ -277,7 +277,7 @@ if (process.argv.includes('--child')) {
     if(platform==='win32')for(const folder of ['Local','Roaming'])fs.mkdirSync(path.join(env.USERPROFILE,'AppData',folder),{recursive:true});
     // Remove inherited differently-cased PATH entries on Windows.
     for(const key of Object.keys(env))if(key.toUpperCase()==='PATH'&&key!=='PATH')delete env[key];
-    const r=spawnSync(process.execPath,[self,'--child',name,...(process.argv.includes('--verbs-only')?['--verbs-only']:[])],{env,encoding:'utf8',windowsHide:true,timeout:900000,maxBuffer:16*1024**2, ...(name==='apply'?{stdio:'inherit'}:{})});process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');success=r.status===0;if(success)passed++;else failed++;}
+    const r=spawnSync(process.execPath,[self,'--child',name,...(process.argv.includes('--verbs-only')?['--verbs-only']:[]),...(process.argv.includes('--verbs2-only')?['--verbs2-only']:[])],{env,encoding:'utf8',windowsHide:true,timeout:900000,maxBuffer:16*1024**2, ...(name==='apply'?{stdio:'inherit'}:{})});process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');success=r.status===0;if(success)passed++;else failed++;}
     finally {if(!inside(root,tempBase))throw new Error('unsafe cleanup');if(success)fs.rmSync(root,{recursive:true,force:true});else process.stdout.write('Failed installer case: '+root+'\n');}
   }
   const statusFile=path.join(diagnostics.root,'brief16-status.txt');

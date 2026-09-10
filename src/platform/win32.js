@@ -465,9 +465,10 @@ function dpapi(name, operation, input) {
 }
 // Encoded transport keeps plaintext handling in lib/secrets.js; helpers use only pipes.
 function secretGet(name) { return dpapi(name,'unprotect',fs.readFileSync(secretPath(name),'utf8')); }
-function secretSet(name,value) { const p = secretPath(name); const blob = dpapi(name,'protect',value); fs.mkdirSync(path.dirname(p),{recursive:true}); fs.writeFileSync(p,blob,{mode:0o600}); }
+function secretSet(name,value,writer) { const p = secretPath(name); const blob = dpapi(name,'protect',value); fs.mkdirSync(path.dirname(p),{recursive:true}); return writer?writer(p,blob):fs.writeFileSync(p,blob,{mode:0o600}); }
 function secretDelete(name) { const p = secretPath(name); try { fs.unlinkSync(p); } catch(e) { if(e.code !== 'ENOENT') throw e; } }
 module.exports = {
+  secretPath,
   ownerAclState: (dir, env, invoke) => {
     const sys=env.SYSTEMROOT||env.SystemRoot;if(!sys)return {ok:false,reason:'backup_acl_not_restricted'};
     const command="$ErrorActionPreference='Stop'; $a=Get-Acl -LiteralPath "+psQuote(dir)+"; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $ok=$a.AreAccessRulesProtected; $own=$false; foreach($r in $a.Access){$s=$r.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value; if($r.AccessControlType -eq 'Allow'){if($s -notin @($sid,'S-1-5-18','S-1-5-32-544')){$ok=$false}; if($s -eq $sid -and ($r.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -eq [Security.AccessControl.FileSystemRights]::FullControl){$own=$true}}}; if($ok -and $own){'restricted'}else{'not_restricted'}";

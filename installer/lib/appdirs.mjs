@@ -16,6 +16,7 @@ export function appdirs({ env = process.env, home, appVersion = version.APP_VERS
   const root = p.join(stateAnchor, 'council'), etc = p.join(root, 'etc'), run = p.join(root, 'run');
   const profileDir = p.join(etc, 'profiles', profile), runtimeRoot = p.join(run, profile);
   return { id, home, stateAnchor, root, app: p.join(root, 'app', appVersion), etc, run,
+    skill: p.join(vars.CLAUDE_CONFIG_DIR || p.join(home, '.claude'), 'skills', 'council-setup', 'SKILL.md'),
     launcher: p.join(root, 'bin', 'council-server.js'), current: p.join(root, 'current.json'),
     globalStop: p.join(root, 'STOP'), machine: p.join(etc, 'machine.json'), profileDir,
     config: p.join(profileDir, 'config.json'), accounts: p.join(profileDir, 'accounts.json'),
