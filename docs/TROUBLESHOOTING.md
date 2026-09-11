@@ -7,6 +7,9 @@ integrity result, resolved layout and configuration failures. A missing profile 
 `apply --profile <id> --plan <saved-plan> --yes`. An integrity failure
 requires restoring a verified installation; editing its manifest is not a repair.
 
+`rg_missing` means `council_search` will refuse until vendored ripgrep is present; after restoring it, run `plan --hosts none` and apply that plan to refresh the machine paths.
+If Codex is unavailable although detect marks it usable, re-plan with `--hosts none` and apply to repair machine hydration, then verify; detect requires all three isolation flags on `codex exec`, and verify reports an availability mismatch as drift (exit 7).
+
 Gemini uses the API provider by default. Supply COUNCIL_GEMINI_API_KEY in the server's own
 environment or use the OS store through the installer. Without configured pricing,
 Gemini API cost estimates are unavailable and its spend is cost-uncapped.

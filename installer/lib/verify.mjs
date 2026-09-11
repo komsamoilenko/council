@@ -2,8 +2,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
-import {fileURLToPath} from 'node:url';
-import {context,readJSON,exists,linked,under,hostPaths} from './survey.mjs';
+import {context,readJSON,exists,linked,under,hostPaths,survey} from './survey.mjs';
+import {doctorProbe} from './verify-trust.mjs';
 import {readManifest,entryState} from './manifest.mjs';
 import {registrationMatches} from './registration.mjs';
 import {scanMarkers} from './markers.mjs';
@@ -81,16 +81,27 @@ export async function verify(options={},overrides={}) {
   const app=path.join(d.root,'app',current.version);
   result.drift.push(...integrity.check(app,path.join(d.manifests,'app-'+current.version+'.json')).failures);
   if(!config||!machine)return {...result,drift:[...result.drift,'profile_missing'],exitCode:7};
+  const detected=await (ctx.detect||survey)({profile:m.profile,vault:config.vault},ctx);
+  const clis=detected.blocks.find(b=>b.name==='clis').clis;
+  const hydration=[];
+  if(clis.codex.rg&&!machine.binaries?.rg)hydration.push('machine.binaries.rg:rg_missing');
+  for(const name of ['claude','codex']) {
+    const key=name==='codex'?'codex_js':name;
+    if(clis[name].usable&&clis[name].path&&!machine.binaries?.[key])hydration.push('machine.binaries.'+key+':missing');
+  }
+  const availability=doc=>{
+    for(const name of ['claude','codex'])if(clis[name].usable&&doc?.backends?.[name]?.available===false)
+      hydration.push('machine.binaries.'+(name==='codex'?'codex_js':name)+':backend_unavailable:'+doc.backends[name].reason);
+  };
   const expand=s=>String(s||'').replace(/%([^%]+)%/g,(_,k)=>k==='COUNCIL_VAULT'?config.vault:k==='COUNCIL_APP'?app:ctx.env[k]||'%'+k+'%');
   const vault=expand(config.vault),runtime=expand(config.runtime_root),jobs=path.resolve(vault,expand(config.layout?.jobs_dir||'work/jobs')),ledger=path.resolve(vault,expand(config.layout?.ledger_dir||'ledger'));
   if(vault!==m.vault.path||runtime!==m.runtime_root||under(runtime,vault)||under(d.root,vault)||under(vault,d.root))drift('zone_separation_failed');
   for(const p of [jobs,ledger])if((!under(p,vault)&&!under(p,runtime))||await linked(p,ctx))drift('derived_root_failed:'+p);
   for(const [name,doc] of [['config',config],['machine',machine],['accounts',readJSON(d.accounts,{})]])for(const key of redact.findSecrets(doc))drift('secret_in_config:'+name+'.'+key);
-  // Run the existing trust checker in the profile's own environment, without booting.
-  const probeFile=new URL('./verify-trust.mjs',import.meta.url);
+  // The existing doctor bridge supplies runtime trust and availability together.
   try {
-    const check=ctx.trustCheck?await ctx.trustCheck():ctx.run(ctx.node,[fileURLToPath(probeFile)],{env:{...ctx.env,COUNCIL_PROFILE:m.profile,COUNCIL_CONFIG:''}});
-    if(check.status!==0)drift('config_trust_check_failed');else {const parsed=JSON.parse(check.stdout);result.trust=parsed;for(const f of parsed.failures||[])drift(f.key+':'+f.reason);}
+    const check=ctx.trustCheck?await ctx.trustCheck():await (async()=>{const doc=await doctorProbe(ctx);availability(doc);return {status:0,stdout:JSON.stringify({...doc.config.trust,agy:doc.agy})};})();
+    if(check.status!==0)drift('config_trust_check_failed');else {const parsed=JSON.parse(check.stdout);availability(parsed);result.trust=parsed;for(const f of parsed.failures||[])drift(f.key+':'+f.reason);}
   }catch{drift('config_trust_check_failed');}
   result.agy=result.trust?.agy||{reason:'policy_check_unavailable',notice:'see NOTICE.md'};
   for(const e of [...m.entries,...m.registrations]) {
@@ -121,10 +132,11 @@ export async function verify(options={},overrides={}) {
     try {
       if(names.some(n=>exists(path.join(ledger,n))))throw new Error('existing_verify_'+'ledger_preserved');
       for(const name of names){const file=path.join(ledger,name);await safewrite(file,'',{exclusive:true});owned.push({file,ino:fs.statSync(file).ino});result.created.push(file);}
-      for(const {r,value} of registrations)try {const report=await (ctx.verifyHandshake||verifyHandshake)(value,{...ctx,dirs:{...d,runtimeRoot:runtime}},{profile:m.profile,vault,jobs,ledger});result.registrations.push({host:r.host,...report});}catch(e){drift(e.message+':'+r.host);}
+      for(const {r,value} of registrations)try {const report=await (ctx.verifyHandshake||verifyHandshake)(value,{...ctx,dirs:{...d,runtimeRoot:runtime}},{profile:m.profile,vault,jobs,ledger});availability(report.doctor);result.registrations.push({host:r.host,...report});}catch(e){drift(e.message+':'+r.host);}
     }catch(e){drift(e.message);}finally {
       for(const {file,ino} of owned)try{if(path.dirname(file)!==ledger||await linked(file,ctx)||fs.statSync(file).ino!==ino)throw new Error('identity_changed');fs.unlinkSync(file);}catch(e){result.cleanup_left.push({path:file,reason:e.code||e.message});}
     }
   }
+  result.drift.push(...new Set(hydration));
   result.exitCode=result.drift.length||result.cleanup_left.length?7:0;return result;
 }

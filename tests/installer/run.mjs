@@ -40,6 +40,7 @@ if (process.argv.includes('--child')) {
   const env={...process.env};
   const npmRoot=path.join(root,'npm','node_modules');
   for (const file of [path.join('@anthropic-ai','claude-code','bin','claude.exe'),path.join('@openai','codex','bin','codex.js')]) put(path.join(npmRoot,file),'fixture sentinel\n');
+  put(path.join(npmRoot,'@openai','codex','node_modules','@openai','codex-win32-x64','vendor','x86_64-pc-windows-msvc','codex-path','rg.exe'),'fixture ripgrep\n');
   const node=process.execPath;
   const probe=(file,args,opts) => {
     assert.equal(path.isAbsolute(file),true); assert.equal(opts.cwd,os.tmpdir()); assert.equal(opts.shell,false);
@@ -56,7 +57,15 @@ if (process.argv.includes('--child')) {
     if (file===node && args[0]===path.join(path.dirname(node),'node_modules','npm','bin','npm-cli.js')) return {status:0,stdout:args[1]==='root'?npmRoot:args[1]==='prefix'?path.dirname(npmRoot):'11.0.0',stderr:''};
     if (file===path.join(fakebin,'git')) return args.includes('check-ignore')?{status:128,stdout:'',stderr:''}:{status:0,stdout:'git version 2.51.2',stderr:''};
     if (file===path.join(npmRoot,'@anthropic-ai','claude-code','bin','claude.exe')) return {status:0,stdout:'2.1.263 (Claude Code)',stderr:''};
-    if (file===node && args[0]===path.join(npmRoot,'@openai','codex','bin','codex.js')) return {status:0,stdout:args.includes('--help')?'--ignore-user-config':args.includes('login')?'signed in':'codex-cli 0.153.2',stderr:''};
+    if (file===node && args[0]===path.join(npmRoot,'@openai','codex','bin','codex.js')) {
+      const argv=args.slice(1);
+      if(argv.includes('--help')) {
+        assert.ok(JSON.stringify(argv)===JSON.stringify(['exec','--help'])||JSON.stringify(argv)===JSON.stringify(['exec','--ignore-user-config','--ignore-rules','--skip-git-repo-check','--help']));
+        return {status:0,stdout:'--ignore-user-config --ignore-rules --skip-git-repo-check',stderr:''};
+      }
+      assert.ok(JSON.stringify(argv)===JSON.stringify(['--version'])||JSON.stringify(argv)===JSON.stringify(['login','status']));
+      return {status:0,stdout:argv.includes('login')?'signed in':'codex-cli 0.153.2',stderr:''};
+    }
     throw new Error('Unapproved probe: '+file+' '+args.join(' '));
   };
   const ctx=context({env,probe,nodeVersion:'v24.11.1',now:()=>new Date(Date.UTC(2026,8,8,9,10,tick++)),attributes:async file=>path.basename(file)==='cloud.md'?{bits:0x1000}:null});

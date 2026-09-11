@@ -11,7 +11,8 @@ Gemini API key for the Gemini leg. Echo needs no vendor account. Ripgrep is
 required for vault search. When its configured binary is missing, council_search
 reports candidates including the supported vendor package; it does not
 automatically run a candidate. Council_doctor checks the configured binary.
-Installer detect does not probe ripgrep.
+Installer detect checks for a regular readable vendored ripgrep without executing it.
+`machine.json` carries detected CLI and ripgrep paths, the Gemini API helper, detected versions, write time and NOTICE acknowledgement; a new `plan --hosts none` followed by `apply` refreshes these fields while preserving user-owned keys.
 
 Once Node can run the installer, `bin\council-setup.cmd install-prereqs`
 provides the attended prerequisite path. Select `--node`, `--claude`, or

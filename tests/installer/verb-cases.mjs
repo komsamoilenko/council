@@ -10,7 +10,7 @@ import {update} from '../../installer/lib/update.mjs';
 import {sha256} from '../../installer/lib/manifest.mjs';
 import {scanMarkers} from '../../installer/lib/markers.mjs';
 import {names,put} from './fixtures.mjs';
-import {nativeProbe} from '../../installer/lib/survey.mjs';
+import {nativeProbe,survey} from '../../installer/lib/survey.mjs';
 import {appdirs} from '../../installer/lib/appdirs.mjs';
 import {buildPlan,publishPlan} from '../../installer/lib/planning.mjs';
 import {snapshot,assertUnchanged} from './sandbox-assertions.mjs';
@@ -32,6 +32,37 @@ function zipFixture(files) {
 }
 export async function verbCases(make,tree) {
   let count=0;
+  {
+    const f=await make('empty');await apply(f.options,f.ctx);
+    const machine=JSON.parse(fs.readFileSync(f.ctx.dirs.machine));
+    const rg=machine.binaries.rg,rgBytes=fs.readFileSync(rg);
+    delete machine.binaries.rg;json(f.ctx.dirs.machine,machine);fs.unlinkSync(rg);
+    try {
+      const detected=await survey({vault:f.vault},f.ctx);
+      assert.equal(detected.blocks.find(b=>b.name==='clis').clis.codex.rg,null);
+      assert.ok(detected.warnings.some(x=>x.startsWith('rg_missing:')));
+      const absent=await verify({}, {...f.ctx,trustCheck:async()=>({status:0,stdout:JSON.stringify({failures:[]})})});
+      assert.equal(absent.exitCode,0,JSON.stringify(absent));assert.deepEqual(absent.drift,[]);
+      assert.doesNotMatch(JSON.stringify(absent),/rg_missing|machine\.binaries\.rg/);
+      process.stdout.write('PASS hydration rg absent from install and detect: no rg drift, verify exit 0\n');
+    } finally {put(rg,rgBytes);}
+    delete machine.binaries.codex_js;delete machine.binaries.rg;
+    machine.user_owned={keep:true};json(f.ctx.dirs.machine,machine);
+    const ctx={...f.ctx,trustCheck:async()=>({status:0,stdout:JSON.stringify({failures:[],backends:{codex:{available:!!JSON.parse(fs.readFileSync(f.ctx.dirs.machine)).binaries.codex_js,reason:'codex.js missing'}}})})};
+    const bad=await verify({},ctx);
+    assert.equal(bad.exitCode,7);
+    assert.ok(bad.drift.some(x=>x.includes('codex_js')));assert.ok(bad.drift.some(x=>x.includes('rg_missing')));
+    process.stdout.write('PASS hydration verify missing codex_js + rg: drift, exit 7\n');
+    const built=await buildPlan({vault:f.vault,hosts:'none',json:true},f.ctx);await publishPlan(built);
+    await apply({plan:built.plan.file,yes:true},f.ctx);
+    const repaired=JSON.parse(fs.readFileSync(f.ctx.dirs.machine));
+    assert.ok(repaired.binaries.codex_js);assert.ok(repaired.binaries.rg);assert.deepEqual(repaired.user_owned,{keep:true});
+    const good=await verify({},ctx);assert.equal(good.exitCode,0,JSON.stringify(good));assert.deepEqual(good.drift,[]);
+    process.stdout.write('PASS hydration plan --hosts none + apply repairs codex_js + rg; verify exit 0\n');
+    const unavailable=await verify({}, {...ctx,trustCheck:async()=>({status:0,stdout:JSON.stringify({failures:[],backends:{claude:{available:false,reason:'fixture unavailable'}}})})});
+    assert.equal(unavailable.exitCode,7);assert.ok(unavailable.drift.some(x=>x.includes('claude:backend_unavailable')));
+    process.stdout.write('PASS hydration doctor unavailable with usable CLI is drift\n');count++;
+  }
   for(const name of names) {
     const f=await make(name),before=tree(f.vault);await apply(f.options,f.ctx);
     const installed=tree(f.vault),manifest=JSON.parse(fs.readFileSync(f.ctx.dirs.manifest));
@@ -63,7 +94,7 @@ export async function verbCases(make,tree) {
   {
     const f=await make('empty','claude-desktop',true);await apply(f.options,f.ctx);
     const before=snapshot(f.dir);
-    const checked=await verify({}, {...f.ctx,probe:nativeProbe});
+    const checked=await verify({}, {...f.ctx,probe:nativeProbe,detect:options=>survey(options,f.ctx)});
     assert.equal(checked.exitCode,0,JSON.stringify(checked));assert.equal(checked.registrations.length,1);assertUnchanged(f.dir,f.ctx.env.USERPROFILE,before,snapshot(f.dir),[],f.ctx.dirs.id);
     assert.equal(checked.registrations[0].doctor.mode,'normal');assert.equal(checked.registrations[0].doctor.reaper,'suppressed (COUNCIL_SMOKE_RUN)');count++;
     process.stdout.write('PASS real-profile verify initialize + tools/list + doctor + clean pipe exit\n');
@@ -82,7 +113,7 @@ export async function verbCases(make,tree) {
     let runtime;
     const f=await make('empty','claude-desktop',true,(ctx,vault)=>{runtime=path.join(ctx.dirs.root,'custom-runtime');json(ctx.dirs.config,{schema:2,vault,runtime_root:runtime});});
     await apply(f.options,f.ctx);const before=snapshot(f.dir);
-    const checked=await verify({}, {...f.ctx,probe:nativeProbe});assert.equal(checked.exitCode,0,JSON.stringify(checked));assertUnchanged(f.dir,f.ctx.env.USERPROFILE,before,snapshot(f.dir),[],f.ctx.dirs.id);
+    const checked=await verify({}, {...f.ctx,probe:nativeProbe,detect:options=>survey(options,f.ctx)});assert.equal(checked.exitCode,0,JSON.stringify(checked));assertUnchanged(f.dir,f.ctx.env.USERPROFILE,before,snapshot(f.dir),[],f.ctx.dirs.id);
     const removed=await uninstall({yes:true},{...f.ctx,...terminal()});assert.equal(removed.exitCode,0,JSON.stringify(removed));assert.ok(fs.existsSync(runtime));assert.equal(fs.existsSync(f.ctx.dirs.app),false);count++;
   }
   {

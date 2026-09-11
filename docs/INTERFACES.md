@@ -1,5 +1,7 @@
 # Interfaces
 
+Installer `detect --json` reports `clis.codex.exec_flags` with booleans `ignoreUserConfig`, `ignoreRules` and `skipGitRepoCheck` when Codex is probed, names missing flags in warnings, and records its contained vendored ripgrep path in `clis.codex.rg` (or null with `rg_missing`).
+
 ## Transport and result envelope
 
 The server exposes eight MCP tools over stdio JSON-RPC. Tool schemas reject

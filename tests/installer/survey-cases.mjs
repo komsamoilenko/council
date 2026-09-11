@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
-import {context,inspectVault,linked} from '../../installer/lib/survey.mjs';
+import {context,inspectVault,linked,survey} from '../../installer/lib/survey.mjs';
 import {attributeBatch} from '../../installer/lib/attribute-batch.mjs';
 import {scanDuplicates} from '../../installer/lib/duplicates.mjs';
 import {put} from './fixtures.mjs';
@@ -14,6 +14,16 @@ export async function surveyCases(root,ctx,invoke) {
   for(const dir of ['.git/objects/ab','node_modules/pkg','work/jobs/date/job','ledger'])
     for(let i=0;i<300;i++)put(path.join(vault,dir,String(i)),'fixture');
   for(let i=0;i<5;i++)put(path.join(vault,'notes',String(i)+'.md'),'note');
+  await check('Codex exec flags accepted; missing --ignore-rules refuses',async()=>{
+    const good=await survey({vault},ctx),codex=good.blocks.find(b=>b.name==='clis').clis.codex;
+    assert.equal(codex.usable,true);
+    assert.deepEqual(codex.exec_flags,{ignoreUserConfig:true,ignoreRules:true,skipGitRepoCheck:true});
+    const negative=context({...ctx,probe:(file,args,opts)=>args.at(-2)==='exec'&&args.at(-1)==='--help'?{status:0,stdout:'--ignore-user-config --skip-git-repo-check'}:ctx.probe(file,args,opts)});
+    const bad=await survey({vault},negative),cli=bad.blocks.find(b=>b.name==='clis').clis.codex;
+    assert.equal(cli.usable,false);assert.equal(cli.exec_flags.ignoreRules,false);
+    assert.ok(bad.warnings.some(w=>w.includes('--ignore-rules')));
+    assert.ok(bad.warnings.some(w=>w.includes('Codex version floor UNVERIFIED')));
+  });
   await check('excluded counts, zero walk probes, junction never entered',async()=>{
     const outside=path.join(root,'outside-survey');put(path.join(outside,'canary'),'outside');
     try {fs.symlinkSync(outside,path.join(vault,'junction'),process.platform==='win32'?'junction':'dir');}

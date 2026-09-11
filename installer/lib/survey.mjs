@@ -75,6 +75,22 @@ export async function linked(file, ctx) {
 function semver(text) { return /(?:^|[^\d])(\d+)\.(\d+)\.(\d+)\b/.exec(text)?.slice(1).map(Number); }
 function below(text, floor) { const v = semver(text); return !v || v[0] < floor[0] || v[0] === floor[0] && (v[1] < floor[1] || v[1] === floor[1] && v[2] < floor[2]); }
 function invocation(file, args, ctx) { return /\.[cm]?js$/i.test(file) ? ctx.run(ctx.node, [file, ...args]) : ctx.run(file, args); }
+export function vendoredRipgrep(codex, id) {
+  if (!codex || id !== 'win32' || path.basename(codex) !== 'codex.js') return null;
+  const root = path.resolve(path.dirname(codex), '..');
+  const executable = 'rg'+path.extname(process.execPath);
+  const file = path.join(root,'node_modules','@openai','codex-win32-x64','vendor','x86_64-pc-windows-msvc','codex-path',executable);
+  try {
+    if (!under(fs.realpathSync(file),root)) return null;
+    for (let p=file; ; p=path.dirname(p)) {
+      if (fs.lstatSync(p).isSymbolicLink()) return null;
+      if (p===root) break;
+    }
+    if (!fs.lstatSync(file).isFile()) return null;
+    fs.accessSync(file,fs.constants.R_OK);
+    return file;
+  } catch { return null; }
+}
 export function hostPaths(ctx) {
   const { env, dirs: d } = ctx;
   const desktop = d.id === 'win32' ? [path.join(env.APPDATA || path.join(d.home, 'AppData','Roaming'), 'Claude','claude_desktop_config.json')] :
@@ -120,14 +136,20 @@ export async function survey(options, ctx) {
     clis[name].usable = r.status === 0 && !!clis[name].version && name !== 'agy';
     if (name === 'claude' && below(r.stdout, [2,1,263])) { clis[name].usable = false; warnings.push('claude below 2.1.263; upgrade with npm install -g @anthropic-ai/claude-code.'); }
     if (name === 'codex') {
-      const help = invocation(file, ['--help'], ctx);
-      const accepts = invocation(file, ['--ignore-user-config','--version'], ctx);
-      clis[name].ignoreUserConfig = help.status === 0 && help.stdout.includes('--ignore-user-config') && accepts.status === 0;
-      clis[name].usable &&= clis[name].ignoreUserConfig;
+      const flags = {ignoreUserConfig:'--ignore-user-config',ignoreRules:'--ignore-rules',skipGitRepoCheck:'--skip-git-repo-check'};
+      const help = invocation(file, ['exec','--help'], ctx);
+      const accepts = invocation(file, ['exec',...Object.values(flags),'--help'], ctx);
+      clis[name].exec_flags = Object.fromEntries(Object.entries(flags).map(([key,flag])=>[key,help.status===0 && help.stdout.split(/\s|[=,]/).includes(flag)]));
+      for (const [key,flag] of Object.entries(flags)) if (!clis[name].exec_flags[key]) warnings.push('Codex exec missing flag: '+flag);
+      if (accepts.status!==0) warnings.push('Codex exec flag acceptance probe failed.');
+      clis[name].ignoreUserConfig = clis[name].exec_flags.ignoreUserConfig && accepts.status===0;
+      clis[name].usable &&= Object.values(clis[name].exec_flags).every(Boolean) && accepts.status===0;
       warnings.push('Codex version floor UNVERIFIED; --ignore-user-config support was probed.');
     }
     if (name === 'agy') { const help = invocation(file, ['--help'], ctx); clis[name].printTimeout = help.status === 0 && help.stdout.includes('--print-timeout'); warnings.push('agy --print-timeout version floor UNVERIFIED; disabled by policy.'); }
   }
+  clis.codex.rg = vendoredRipgrep(clis.codex.path,ctx.dirs.id);
+  if (!clis.codex.rg) warnings.push('rg_missing: council_search will refuse until ripgrep is present.');
   const desktop = platform.desktopCliLayout({env:ctx.env, home:ctx.dirs.home});
   const desktopClis = [];
   if (desktop && exists(desktop.root)) for (const name of fs.readdirSync(desktop.root).sort()) { const file = path.join(desktop.root,name,desktop.executable); if (exists(file)) desktopClis.push({ path: file, status: 'found, not usable by 0.1.0' }); }
