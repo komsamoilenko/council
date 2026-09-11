@@ -18,6 +18,7 @@ import {login} from '../../installer/lib/login.mjs';
 import {uninstall} from '../../installer/lib/uninstall.mjs';
 import {readJournal,openJournals} from '../../installer/lib/journal.mjs';
 import {spliceJsonEntry} from '../../installer/lib/host-json.mjs';
+import {councilFirstArg} from '../../installer/lib/tomlblock.mjs';
 import {put} from './fixtures.mjs';
 import {snapshot,assertUnchanged} from './sandbox-assertions.mjs';
 
@@ -128,6 +129,47 @@ export async function verbs2Cases(make,tree) {
     return {...f,ctx,term,from:path.join(f.vault,'bin','council'),hosts:Object.values(hostPaths(ctx)).flat()};
   };
   const phase=async(f,n,host)=>{const r=await migrate({from:f.from,phase:String(n),...(host?{host}:{})},f.ctx);assert.equal(r.exitCode,0,JSON.stringify(r));return r;};
+  for(const style of ['literal','basic','multiline literal','multiline basic','equivalent path'])await check('migration TOML value adoption: '+style,async()=>{
+    const f=await migrationFixture();await phase(f,0);await phase(f,1);
+    const file=hostPaths(f.ctx).codex[0];
+    const spaced=path.join(f.from,'path with space');fs.mkdirSync(spaced);
+    const server=spaced+path.sep+'..'+path.sep+'server.js';
+    const spelling=style==='equivalent path'?server.toUpperCase()+path.sep:server;
+    assert.ok(spelling.includes(' '),'fixture path contains a space');
+    const encoded=style==='basic'?JSON.stringify(spelling):style==='multiline basic'?'"""\n'+JSON.stringify(spelling).slice(1,-1)+'"""':style==='multiline literal'?"'''\n"+spelling+"'''":"'"+spelling+"'";
+    const prefix='# neighbour before\n[mcp_servers.neighbor]\ncommand = \'keep before\'\n\n';
+    const suffix='[windows]\nsandbox = "standard" # keep after\n[mcp_servers.other]\ncommand = \'keep too\'\n';
+    put(file,prefix+'[mcp_servers.council]\ntool_timeout_sec = 60\ncommand = \'C:\\Program Files\\nodejs\\node.exe\'\nargs = ['+encoded+']\n\n[mcp_servers.council.env]\nCOUNCIL_HOST = "codex"\n\n'+suffix);
+    const before=snapshot(f.dir);
+    assert.equal((await migrate({from:f.from,phase:'2',host:'codex','dry-run':true},f.ctx)).exitCode,0);
+    assertUnchanged(f.dir,f.ctx.env.USERPROFILE,before,snapshot(f.dir),[],f.ctx.dirs.id);
+    await phase(f,2,'codex');
+    const after=fs.readFileSync(file);
+    assert.deepEqual(after.subarray(0,Buffer.byteLength(prefix)),Buffer.from(prefix));
+    assert.deepEqual(after.subarray(-Buffer.byteLength(suffix)),Buffer.from(suffix));
+    assert.equal(councilFirstArg(after),f.ctx.dirs.launcher);
+    process.stdout.write('PASS migration TOML value adoption: '+style+'; dry-run unchanged; neighbours byte-identical\n');
+  });
+  for(const variant of ['different server','missing table','missing args','decoy in later argument','decoy in env'])await check('migration TOML value refusal: '+variant,async()=>{
+    const f=await migrationFixture();await phase(f,0);await phase(f,1);
+    const file=hostPaths(f.ctx).codex[0],server=JSON.stringify(path.join(f.from,'server.js'));
+    const wrong=JSON.stringify(path.join(f.from,'other-server.js'));
+    put(file,variant==='missing table'?'[other]\nargs = ['+server+']\n':'[mcp_servers.council]\n'+(variant==='missing args'?'command = '+server+'\n':'args = ['+wrong+(variant==='decoy in later argument'?', '+server:'')+']\n')+(variant==='decoy in env'?'[mcp_servers.council.env]\nargs = ['+server+']\n':''));
+    const before=snapshot(f.dir);
+    await assert.rejects(migrate({from:f.from,phase:'2',host:'codex'},f.ctx),e=>e.code==='E-HOST-NAME-TAKEN'&&e.exitCode===4);
+    assertUnchanged(f.dir,f.ctx.env.USERPROFILE,before,snapshot(f.dir),[],f.ctx.dirs.id);
+    process.stdout.write('PASS migration TOML value refusal: '+variant+'; E-HOST-NAME-TAKEN exit 4; whole sandbox unchanged\n');
+  });
+  await check('migration JSON hosts compare equivalent path values',async()=>{
+    const f=await migrationFixture();await phase(f,0);await phase(f,1);await phase(f,2,'codex');
+    for(const host of ['claude-desktop','claude-code']) {
+      const file=hostPaths(f.ctx)[host][0],doc=readJSON(file);
+      doc.mcpServers.council.args[0]=path.join(f.from,'server.js').toUpperCase()+path.sep;
+      put(file,JSON.stringify(doc,null,2)+'\n');await phase(f,2,host);
+      assert.equal(readJSON(file).mcpServers.council.args[0],f.ctx.dirs.launcher);
+    }
+    process.stdout.write('PASS migration JSON hosts: equivalent path values adopted by claude-desktop and claude-code\n');
+  });
   await check('migration phase 0 dry-run accepts more than 5000 job-store files',async()=>{
     const f=await migrationFixture();
     for(let i=0;i<5001;i++)put(path.join(f.vault,'work','jobs','fixture-date','fixture-job',String(i)),'fixture');

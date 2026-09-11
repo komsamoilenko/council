@@ -12,7 +12,7 @@ import {apply} from './apply.mjs';
 import {verify} from './verify.mjs';
 import {registrationEdit,registrationMatches} from './registration.mjs';
 import {spliceJsonEntry} from './host-json.mjs';
-import {councilSpan,tokenizeToml} from './tomlblock.mjs';
+import {councilSpan,tokenizeToml,councilFirstArg} from './tomlblock.mjs';
 import {scanMarkers} from './markers.mjs';
 import {safewrite,writeHostSplice} from './safewrite.mjs';
 import {journal,readJournal,openJournals} from './journal.mjs';
@@ -223,8 +223,9 @@ export async function migrate(options,ctx) {
     if(order.slice(0,order.indexOf(host)).some(h=>!m.migration?.hosts?.includes(h)))throw fail('E-USAGE','Cut over Codex, then Claude Desktop, then Claude Code.');
     const files=hostPaths(ctx)[host].filter(exists);if(files.length!==1)throw fail('E-USAGE','Migration needs one unambiguous host configuration.');
     const file=files[0],before=bytes(file),op={type:'host',host,path:file,name:'council'},old=value(op);
-    if(old===null||(host!=='codex'&&old.args?.[0]!==path.join(from,'server.js')))throw fail('E-HOST-NAME-TAKEN','Expected previous council registration.');
-    if(host==='codex'&&!old.includes(JSON.stringify(path.join(from,'server.js'))))throw fail('E-HOST-NAME-TAKEN','Expected previous council table.');
+    const previousArg=host==='codex'?councilFirstArg(before):old?.args?.[0];
+    if(typeof previousArg!=='string'||!(ctx.platform||platform).sameFile(previousArg,path.join(from,'server.js')))
+      throw fail('E-HOST-NAME-TAKEN',host==='codex'?'Expected previous council table.':'Expected previous council registration.');
     const descriptor={surface:host,path:file,name:'council',command:ctx.node,args:[ctx.dirs.launcher],env:{COUNCIL_HOST:host,COUNCIL_PROFILE:m.profile},adoptExisting:true};
     const changed=registrationEdit(descriptor,before),target=value(op,changed.edit.bytes);
     if(host==='claude-code'){hostOp(host,file,'council',old,null);hostOp(host,file,'council',null,target);}else hostOp(host,file,'council',old,target);

@@ -1,13 +1,39 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spliceToml, spliceTomlFile, exciseToml, councilSpan, tokenizeToml } from '../../../installer/lib/tomlblock.mjs';
+import { spliceToml, spliceTomlFile, exciseToml, councilSpan, tokenizeToml, councilFirstArg } from '../../../installer/lib/tomlblock.mjs';
 import { canonicalBlock, scanMarkers, hashBody } from '../../../installer/lib/markers.mjs';
 import { safewrite, assertOutside } from '../../../installer/lib/safewrite.mjs';
 const body='[mcp_servers.council]\ncommand = "new"\n[mcp_servers.council.env]\nMODE = "test"\n';
 const host={implemented:{fileAttributes:false}};
 
 export default async function(test) {
+  await test('first argument values: literal, basic and multiline strings', async () => {
+    const expected = String.raw`C:\Program Files\previous\server.js`;
+    for (const [label, encoded] of [
+      ['literal', "'" + expected + "'"], ['basic', JSON.stringify(expected)],
+      ['multiline literal', "'''\n" + expected + "'''"],
+      ['multiline basic', '"""\n' + JSON.stringify(expected).slice(1,-1) + '"""'],
+      ['multiline continuation', '"""C:\\\\Program \\\n   Files\\\\previous\\\\server.js"""'],
+      ['unicode escape', JSON.stringify(expected).replace('C:', '\\u0043:')]
+    ]) {
+      assert.equal(councilFirstArg('[mcp_servers.council]\nargs = [ # first\n' + encoded + ', "ignored"]\n'), expected, label);
+      process.stdout.write('PASS TOML first argument: ' + label + '\n');
+    }
+    assert.equal(councilFirstArg('[mcp_servers."council"]\n"args" = ["first", "second"]\n'), 'first');
+    assert.equal(councilFirstArg("[mcp_servers.council]\nargs = ['''ends with quote'''' ]\n"), "ends with quote'");
+    for (const text of [
+      '[other]\nargs = ["decoy"]\n',
+      '[mcp_servers.council.env]\nargs = ["decoy"]\n',
+      '[mcp_servers.council]\n# args = ["decoy"]\ncommand = "decoy"\n',
+      '[mcp_servers.council]\ndescription = """\nargs = [\'decoy\']\n"""\n',
+      '[mcp_servers.council]\nargs = []\n',
+      '[mcp_servers.council]\nargs = [42, "decoy"]\n',
+      '[mcp_servers.council]\nargs = ["first"]\nargs = ["second"]\n',
+      '[mcp_servers.council]\nargs = ["bad\\q"]\n',
+      '[mcp_servers.council]\nargs = ["bad\\uD800"]\n'
+    ]) assert.equal(councilFirstArg(text), null, text);
+  });
   await test('adjacent sibling tables survive adoption and excision on disk', async root => {
     const prefix='[mcp_servers.vault]\ncommand = "vault"\n[mcp_servers.ask-claude]\ncommand = "own"\n';
     const old='[mcp_servers.council]\ncommand = "old"\n[mcp_servers.council.env]\nA="b"\n\n';

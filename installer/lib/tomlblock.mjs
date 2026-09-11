@@ -54,6 +54,55 @@ export function councilSpan(input, { name = 'council' } = {}) {
   return { ...tokens, ok: true, span: { start: tokens.headers[first].start, end: tokens.headers[last+1]?.start ?? bytes.length } };
 }
 
+// Read only the first string argument in the exact server table. Table boundaries
+// and multiline-string exclusions come from the same tokenizer used for splicing.
+export function councilFirstArg(input, { name = 'council' } = {}) {
+  const bytes = Buffer.from(input), tokens = councilSpan(bytes, { name });
+  if (!tokens.ok || !tokens.span) return null;
+  const tables = tokens.headers.filter(h => h.names.length === 2 && h.names[0] === 'mcp_servers' && h.names[1] === name);
+  if (tables.length !== 1) return null;
+  const header = tables[0], end = tokens.headers[tokens.headers.indexOf(header) + 1]?.start ?? bytes.length;
+  const assignments = tokens.lines.filter(l => l.start > header.start && l.start < end && !tokens.ignoreLines.has(l.start))
+    .map(l => ({ line: l, match: /^\s*(?:args|"args"|'args')\s*=\s*/.exec(l.text) })).filter(a => a.match);
+  if (assignments.length !== 1) return null;
+  const { line, match } = assignments[0];
+  const text = bytes.subarray(line.start, end).toString('utf8');
+  let i = match[0].length;
+  const space = () => { while (i < text.length) { if (/\s/.test(text[i])) i++; else if (text[i] === '#') { while (i < text.length && text[i] !== '\n') i++; } else break; } };
+  if (text[i++] !== '[') return null;
+  space();
+  const quote = text[i];
+  if (quote !== '"' && quote !== "'") return null;
+  const multiline = text.startsWith(quote.repeat(3), i), delimiter = quote.repeat(multiline ? 3 : 1);
+  i += delimiter.length;
+  if (multiline) { if (text.startsWith('\r\n', i)) i += 2; else if (text[i] === '\n') i++; }
+  let value = '';
+  while (i < text.length) {
+    if (text.startsWith(delimiter, i)) {
+      i += delimiter.length;
+      if (multiline) { let extra = 0; while (text[i] === quote && extra < 2) { value += quote; i++; extra++; } }
+      space();
+      return text[i] === ',' || text[i] === ']' ? value : null;
+    }
+    const c = text[i++];
+    if (!multiline && (c === '\n' || c === '\r')) return null;
+    if (quote === '"' && c === '\\') {
+      if (multiline && /^[ \t]*(?:\r?\n)/.test(text.slice(i))) { while (/\s/.test(text[i] || '') && i < text.length) i++; continue; }
+      const escape = text[i++], simple = { b: '\b', t: '\t', n: '\n', f: '\f', r: '\r', '"': '"', '\\': '\\' };
+      if (Object.hasOwn(simple, escape)) value += simple[escape];
+      else if (escape === 'u' || escape === 'U') {
+        const length = escape === 'u' ? 4 : 8, digits = text.slice(i, i + length);
+        if (digits.length !== length || !/^[0-9a-f]+$/i.test(digits)) return null;
+        const point = parseInt(digits, 16);
+        if (point > 0x10ffff || (point >= 0xd800 && point <= 0xdfff)) return null;
+        value += String.fromCodePoint(point); i += length;
+      } else return null;
+    } else if (c === '\r' && text[i] === '\n') { value += '\n'; i++; }
+    else value += c;
+  }
+  return null;
+}
+
 export function spliceToml(input, body, options = {}) {
   const before = Buffer.from(input), span = councilSpan(before, options);
   if (!span.ok) return span;
