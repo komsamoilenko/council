@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import platform from '../../../src/platform/index.js';
 import {machineBytes} from '../../../installer/lib/machine.mjs';
 import {vendoredRipgrep,sha256} from '../../../installer/lib/survey.mjs';
 
@@ -8,10 +9,10 @@ export default async function(test) {
   await test('template keys, metadata, merge and contained readable ripgrep',async root=>{
     const template=JSON.parse(fs.readFileSync(new URL('../../../installer/templates/profile/machine.template.json',import.meta.url)));
     const codex=path.join(root,'codex','bin','codex.js');
-    const rg=path.join(root,'codex','node_modules','@openai','codex-win32-x64','vendor','x86_64-pc-windows-msvc','codex-path','rg.exe');
+    const rg=path.join(platform.rgVendorDir(codex),platform.expectedImage('rg'));
     fs.mkdirSync(path.dirname(codex),{recursive:true});fs.writeFileSync(codex,'fixture');
     fs.mkdirSync(path.dirname(rg),{recursive:true});fs.writeFileSync(rg,'fixture');
-    const clis={claude:{usable:true,path:path.join(root,'claude.exe'),version:'2.1.263'},codex:{usable:true,path:codex,version:'0.153.2',rg:vendoredRipgrep(codex,'win32')}};
+    const clis={claude:{usable:true,path:path.join(root,'claude.exe'),version:'2.1.263'},codex:{usable:true,path:codex,version:'0.153.2',rg:vendoredRipgrep(codex)}};
     assert.equal(clis.codex.rg,rg);
     const detect={blocks:[{name:'clis',clis},{name:'node',version:'24.11.1'},{name:'npm',root}]};
     const ctx={node:process.execPath,dirs:{id:'win32',skill:path.join(root,'SKILL.md')},now:()=>new Date('2026-09-11T00:00:00Z'),platform:{systemBinaries:()=>({powershell:'fixture',tasklist:'fixture',taskkill:'fixture'})}};
@@ -28,13 +29,12 @@ export default async function(test) {
     ctx.now=()=>new Date('2026-09-12T00:00:00Z');
     assert.deepEqual(render(merged),merged,'an unchanged plan preserves its write timestamp');
     clis.codex.version='0.153.3';assert.equal(render(merged).written_at,ctx.now().toISOString());
-    fs.unlinkSync(rg);clis.codex.rg=vendoredRipgrep(codex,'win32');
+    fs.unlinkSync(rg);clis.codex.rg=vendoredRipgrep(codex);
     assert.equal(clis.codex.rg,null);assert.equal('rg' in render(old).binaries,false);
-    fs.mkdirSync(rg);assert.equal(vendoredRipgrep(codex,'win32'),null);fs.rmdirSync(rg);
-    const outside=path.join(root,'outside');fs.mkdirSync(outside);fs.writeFileSync(path.join(outside,'rg.exe'),'outside');
+    fs.mkdirSync(rg);assert.equal(vendoredRipgrep(codex),null);fs.rmdirSync(rg);
+    const outside=path.join(root,'outside');fs.mkdirSync(outside);fs.writeFileSync(path.join(outside,platform.expectedImage('rg')),'outside');
     fs.rmdirSync(path.dirname(rg));fs.symlinkSync(outside,path.dirname(rg),'junction');
-    assert.equal(vendoredRipgrep(codex,'win32'),null);
-    assert.equal(vendoredRipgrep(codex,'linux'),null);
+    assert.equal(vendoredRipgrep(codex),null);
     process.stdout.write('PASS hydration template keys all; rg absent for missing, directory and escaping junction fixtures\n');
   });
 }

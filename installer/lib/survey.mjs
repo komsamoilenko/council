@@ -75,12 +75,11 @@ export async function linked(file, ctx) {
 function semver(text) { return /(?:^|[^\d])(\d+)\.(\d+)\.(\d+)\b/.exec(text)?.slice(1).map(Number); }
 function below(text, floor) { const v = semver(text); return !v || v[0] < floor[0] || v[0] === floor[0] && (v[1] < floor[1] || v[1] === floor[1] && v[2] < floor[2]); }
 function invocation(file, args, ctx) { return /\.[cm]?js$/i.test(file) ? ctx.run(ctx.node, [file, ...args]) : ctx.run(file, args); }
-export function vendoredRipgrep(codex, id) {
-  if (!codex || id !== 'win32' || path.basename(codex) !== 'codex.js') return null;
+export function vendoredRipgrep(codex) {
+  if (!codex || path.basename(codex) !== 'codex.js') return null;
   const root = path.resolve(path.dirname(codex), '..');
-  const executable = 'rg'+path.extname(process.execPath);
-  const file = path.join(root,'node_modules','@openai','codex-win32-x64','vendor','x86_64-pc-windows-msvc','codex-path',executable);
   try {
+    const file = path.join(platform.rgVendorDir(codex),platform.expectedImage('rg'));
     if (!under(fs.realpathSync(file),root)) return null;
     for (let p=file; ; p=path.dirname(p)) {
       if (fs.lstatSync(p).isSymbolicLink()) return null;
@@ -148,7 +147,7 @@ export async function survey(options, ctx) {
     }
     if (name === 'agy') { const help = invocation(file, ['--help'], ctx); clis[name].printTimeout = help.status === 0 && help.stdout.includes('--print-timeout'); warnings.push('agy --print-timeout version floor UNVERIFIED; disabled by policy.'); }
   }
-  clis.codex.rg = vendoredRipgrep(clis.codex.path,ctx.dirs.id);
+  clis.codex.rg = vendoredRipgrep(clis.codex.path);
   if (!clis.codex.rg) warnings.push('rg_missing: council_search will refuse until ripgrep is present.');
   const desktop = platform.desktopCliLayout({env:ctx.env, home:ctx.dirs.home});
   const desktopClis = [];
