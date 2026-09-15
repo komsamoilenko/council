@@ -3,7 +3,7 @@
 const fs = require('fs'), os = require('os'), path = require('path');
 const { APP_VERSION } = require('../version');
 class PlatformNotImplemented extends Error {
-  constructor(capability) { super(capability + ' is not implemented on this platform in council 0.1.0.'); this.name = 'PlatformNotImplemented'; this.code = 'platform_not_implemented'; }
+  constructor(capability) { super(capability + ' is not implemented on this platform in council ' + APP_VERSION + '.'); this.name = 'PlatformNotImplemented'; this.code = 'platform_not_implemented'; }
 }
 module.exports = function make(id) {
   const homeDir = () => process.env.HOME || os.homedir();
@@ -20,7 +20,7 @@ module.exports = function make(id) {
     vendorBinary: (name, {npmRoot} = {}) => name === 'codex' && npmRoot ? path.join(npmRoot,'@openai','codex','bin','codex.js') : null,
     desktopCliLayout: () => null,
     fileAttributesProbe: () => null,
-    id, implemented: { proc: false, secrets: false, fileAttributes: false }, notImplementedReason: 'Process supervision is not implemented on ' + id + ' in council 0.1.0; use Windows.',
+    id, implemented: { proc: false, secrets: false, fileAttributes: false }, notImplementedReason: 'Process supervision is not implemented on ' + id + ' in council ' + APP_VERSION + '; use Windows.',
     appDirs, homeDir, tokens, caseFold, sameFile: (a,b) => caseFold(real(a)) === caseFold(real(b)), isAbsoluteNative: p => typeof p === 'string' && p.startsWith('/'),
     childEnvAllow: () => ['HOME','USER','LOGNAME','LANG','LC_ALL','LC_CTYPE','TMPDIR','XDG_CONFIG_HOME','XDG_DATA_HOME','XDG_STATE_HOME'],
     childPath: nodeDir => [nodeDir, '/usr/bin', '/bin'].filter(Boolean).join(path.delimiter), nullDevice: () => '/dev/null',

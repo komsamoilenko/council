@@ -73,7 +73,7 @@ user edits are kept. See [VAULT-CONTRACT](docs/VAULT-CONTRACT.md).
 
 | Zone | Example | Purpose |
 |---|---|---|
-| Z0 | `C:\Users\<you>\AppData\Local\council\app\0.1.0` and sibling `bin` | Installed runtime and stable launcher |
+| Z0 | `C:\Users\<you>\AppData\Local\council\app\<version>` and sibling `bin` | Installed runtime and stable launcher |
 | Z1 | `C:\Users\<you>\AppData\Local\council\etc` | Machine/profile config, manifests, journal and backups |
 | Z2 | `C:\Users\<you>\AppData\Local\council\run\default` | Scratch, secrets, and jobs/ledger when relocated |
 | Z3 | `C:\Users\<you>\Vault` | Your notes, rules, tasks and default jobs/ledger |

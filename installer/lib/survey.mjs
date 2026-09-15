@@ -10,6 +10,7 @@ import { cloudsync } from './cloudsync.mjs';
 import { scanMarkers } from './markers.mjs';
 import { councilSpan, tokenizeToml } from './tomlblock.mjs';
 import { openJournals } from './journal.mjs';
+import version from '../../src/version.js';
 import { fail, errorObject } from './dialogue.mjs';
 
 export const REGION_NOTE = 'Gemini API: users in the EEA, Switzerland and the UK must check vendor regional eligibility and billing requirements; see NOTICE.md.';
@@ -151,7 +152,7 @@ export async function survey(options, ctx) {
   if (!clis.codex.rg) warnings.push('rg_missing: council_search will refuse until ripgrep is present.');
   const desktop = platform.desktopCliLayout({env:ctx.env, home:ctx.dirs.home});
   const desktopClis = [];
-  if (desktop && exists(desktop.root)) for (const name of fs.readdirSync(desktop.root).sort()) { const file = path.join(desktop.root,name,desktop.executable); if (exists(file)) desktopClis.push({ path: file, status: 'found, not usable by 0.1.0' }); }
+  if (desktop && exists(desktop.root)) for (const name of fs.readdirSync(desktop.root).sort()) { const file = path.join(desktop.root,name,desktop.executable); if (exists(file)) desktopClis.push({ path: file, status: 'found, not usable by '+version.APP_VERSION }); }
   add('clis', { clis, desktopClis }, cliErrors);
   const hosts = [], hostErrors = [];
   for (const [surface, paths] of Object.entries(hostPaths(ctx))) for (const file of paths) {

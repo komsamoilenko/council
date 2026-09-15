@@ -4,6 +4,7 @@ import path from 'node:path';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import childProcess from 'node:child_process';
+import {createRequire} from 'node:module';
 import {installed, inEnv, put, json, files, snapshot, Wire} from './new-fixture.mjs';
 import portability from '../trust/portability.test.mjs';
 import {names, fixture as vaultFixture} from '../installer/fixtures.mjs';
@@ -72,11 +73,14 @@ export function registerNewTests(test, {ROOT, HERE, TMP}) {
     t.ok(!fs.existsSync(path.join(p.config.vault,'ledger')),'default ledger not created');
   }, {requires:['proc']});
 
-  test('T-24', 'module boundaries and template paths/commands in every fixture and flag combination', async t => {
+  test('T-24', 'module boundaries, no hardcoded app version, and template paths/commands in every fixture and flag combination', async t => {
     const f=await make('T-24');
     try {portability({load:f.load});} catch(e) {t.ok(false,e.message);}
     // A-48 adds the shared pure redactor to boundary 2.
     const allowed=new Set(['version.js','platform/index.js','platform','lib/paths.js','lib/guard.js','lib/roots.js','lib/integrity.js','lib/redact.js']);
+    // A bump must be impossible to get half-right: the literal lives in src/version.js alone.
+    const APP_VERSION = createRequire(import.meta.url)(path.join(ROOT,'src','version.js')).APP_VERSION;
+    const versionLiteral = new RegExp('(?<!\\d)' + APP_VERSION.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + '(?!\\d)');
     for(const dir of ['src','installer']) for(const file of files(path.join(ROOT,dir)).filter(p=>/\.[cm]?js$/.test(p))) {
       const source=fs.readFileSync(file,'utf8');
       if(dir==='src' && path.relative(path.join(ROOT,'src'),file)!==path.join('platform','index.js'))
@@ -96,7 +100,54 @@ export function registerNewTests(test, {ROOT, HERE, TMP}) {
         for(const call of source.matchAll(/fs\.readFileSync\(([^,\n]+)/g))
           t.ok(/^(?:p|o\.stdoutPath|o\.stderrPath|ctx\.paths\.agyGate)$/.test(call[1]),path.relative(ROOT,file)+' unclassified read: '+call[1]);
       }
+      if(path.relative(ROOT,file) !== path.join('src','version.js'))
+        t.ok(!versionLiteral.test(source),path.relative(ROOT,file)+' hardcodes the app version; read APP_VERSION from src/version.js');
     }
+    // A rendered template may never gain a token: update renders the NEW release's template with
+    // the installer the user already has, and render() throws on a name that installer never passed.
+    for(const file of files(path.join(ROOT,'installer','templates')))
+      t.ok(!versionLiteral.test(fs.readFileSync(file,'utf8')),path.relative(ROOT,file)+' hardcodes the app version; write it from code, and never add a {{TOKEN}} a released installer does not pass');
+    // A stale literal is as wrong as today's, so the rule never names a version: every three-part
+    // literal in the scanned set must be the running APP_VERSION unless this list excuses it.
+    const versionExempt=[
+      ['CHANGELOG.md','*','every entry keeps the version it describes, and the format links carry their own'],
+      ['docs/release-notes/','*','notes for a published release keep that release\'s version forever'],
+      ['docs/VERSIONS.md',['20.11.0','24.11.1','2.1.263'],'third-party floors and the tested Node build, not council versions'],
+      ['docs/INSTALL.md',['20.11.0','24.11.1'],'the Node floor the installer enforces and the Node build it was checked on'],
+      ['docs/CONFIG.md',['24.11.1'],'the Node build the configuration path was exercised on'],
+      ['docs/PLATFORMS.md',['24.11.1'],'the Node build the Windows runtime checks used'],
+      ['installer/lib/survey.mjs',['20.11.0','2.1.263'],'the Node and Claude Code floors the survey checks'],
+      ['src/server.js',['6.0.1','2.1.263'],'a SPEC section number and the Claude Code build whose --add-dir help was read'],
+      ['src/lib/search.js',['15.2.0'],'the ripgrep build whose glob behaviour was measured'],
+      ['src/lib/quota.js',['0.153.2'],'the codex build whose rate-limit payload shape was observed'],
+    ];
+    const claimed=[...new Set([
+      ...['src','installer'].flatMap(dir=>files(path.join(ROOT,dir))).filter(p=>/\.[cm]?js$/.test(p)),
+      ...files(path.join(ROOT,'installer','templates')),
+      ...files(path.join(ROOT,'docs')).filter(p=>/\.md$/.test(p)),
+      ...['README.md','CHANGELOG.md','package.json'].map(name=>path.join(ROOT,name)),
+    ])];
+    // One assertion for the whole sweep: a bump must list every stale claim in one run, not one per re-run
+    // (tests/tier0/lint.mjs throws on the first failed assertion, so a loop of them stops at the first file).
+    t.ok(claimed.length>50,'the version sweep scanned only '+claimed.length+' files; a renamed directory would empty it silently');
+    const stale=[],unused=[];
+    for(const file of claimed) {
+      const rel=path.relative(ROOT,file).split(path.sep).join('/');
+      const exempt=versionExempt.find(([p])=>p===rel||(p.endsWith('/')&&rel.startsWith(p)))?.[1];
+      if(exempt==='*')continue;
+      const source=fs.readFileSync(file,'utf8');
+      // Three dotted parts exactly, with or without a leading v: a trailing sentence period still
+      // counts, a fourth number does not. src/version.js's own definition is skipped by the
+      // literal===APP_VERSION test below, because that line is what APP_VERSION means.
+      const found=[...source.matchAll(/(?<![\w.])v?(\d+\.\d+\.\d+)(?!\.?\d)(?!\w)/g)].map(m=>m[1]);
+      for(const literal of found)
+        if(literal!==APP_VERSION && !(exempt||[]).includes(literal))
+          stale.push(rel+' names version '+literal+', which is not APP_VERSION '+APP_VERSION);
+      for(const value of exempt||[])
+        if(!found.includes(value))unused.push(rel+' no longer contains '+value+', so its exemption is a standing permit');
+    }
+    t.ok(!stale.length,'stale version claims; bump them or exempt the path with a reason:\n  '+stale.join('\n  '));
+    t.ok(!unused.length,'version exemptions that nothing needs any more; delete them:\n  '+unused.join('\n  '));
     // Section 14.2 / A-49: declared task conventions are not existing-path claims.
     const taskNames=new Set(['BRIEF.md','NOTES.md','RESULT.md','claude/','codex/','gemini/']);
     const failures=new Map(); let renders=0;

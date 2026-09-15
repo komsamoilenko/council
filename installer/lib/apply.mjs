@@ -10,6 +10,7 @@ import integrity from '../../src/lib/integrity.js';
 import { sanity } from './planning.mjs';
 import { survey, fingerprint, readJSON, exists, linked, under, realFuture } from './survey.mjs';
 import { fail } from './dialogue.mjs';
+import version from '../../src/version.js';
 import { planFileHash, planReport, NOTICE } from './report.mjs';
 import { probeVault } from './preflight.mjs';
 import { acquireLock, releaseLock } from './lock.mjs';
@@ -64,7 +65,7 @@ export async function tier0(ctx) {
 export function applyReport(result) {
   if(result.migration||result.phase!==undefined)return JSON.stringify(result,null,2)+'\n';
   if(result.dryRun)return planReport(result.plan);
-  return [`council-setup 0.1.0 · apply (profile: ${result.profile})`,NOTICE,
+  return [`council-setup ${version.APP_VERSION} · apply (profile: ${result.profile})`,NOTICE,
     result.unchanged?`no changes (${result.verified} entries verified)`:`Completed S0–S11; ${result.changed.length} paths published.`,
     `Registered and verified: ${result.registrations.map(r=>r.host).join(', ')||'none'}`,
     ...result.backups.map(b=>'Whole-file backup (human recovery only for hosts): '+b.backup),
@@ -228,7 +229,7 @@ export async function apply(options,ctx) {
         remember(pre.undo);
         await ctx.mutation?.('written','S3',w.path);
       }
-      const inventory=step.writes.find(w=>w.path===path.join(ctx.dirs.manifests,'app-0.1.0.json'));
+      const inventory=step.writes.find(w=>w.path===path.join(ctx.dirs.manifests,'app-'+version.APP_VERSION+'.json'));
       if(inventory){for(const w of step.writes.filter(w=>w.directory&&under(inventory.path,w.path)&&!under(w.path,ctx.dirs.app)))await publish(w,'S3');await publish(inventory,'S3');}
       fs.renameSync(partial,ctx.dirs.app);created=false;
       for(const w of appWrites){await append({t:'post',stage:'S3',path:w.path,sha256_after:diskHash(w.path)});result.changed.push(w.path);}
@@ -262,7 +263,7 @@ export async function apply(options,ctx) {
       if(step?.git_init){const git=detected.blocks.find(b=>b.name==='git').path;if(!git||ctx.run(git,['-C',plan.answers.vault,'init']).status!==0)throw new Error('git_init_failed');}
       await ctx.boundary?.(stage);
     }
-    const checked=integrity.check(ctx.dirs.app,path.join(ctx.dirs.manifests,'app-0.1.0.json'));
+    const checked=integrity.check(ctx.dirs.app,path.join(ctx.dirs.manifests,'app-'+version.APP_VERSION+'.json'));
     if(!checked.ok)throw fail('E-TIER0-FAILED',checked.failures.join(', '));
     result.tier0=await (ctx.tier0||tier0)(ctx);
     await ctx.boundary?.('S7');
@@ -284,7 +285,7 @@ export async function apply(options,ctx) {
     }
     if(plan.skill){if(diskHash(plan.skill.path)!==plan.skill.sha256)throw fail('E-PLAN-STALE','Skill changed since planning.');entries.set(plan.skill.path,plan.skill);}
     const pointer=readJSON(path.join(plan.answers.vault,'.council','vault.json'));
-    const manifest={...(previous?.migration?{migration:previous.migration}:{}),schema:1,profile:plan.profile,server_name:plan.answers['register-as']||'council',app_version:'0.1.0',installed_at:previous?.installed_at||plan.created_at,last_apply_at:plan.created_at,plan_sha256:hash,
+    const manifest={...(previous?.migration?{migration:previous.migration}:{}),schema:1,profile:plan.profile,server_name:plan.answers['register-as']||'council',app_version:version.APP_VERSION,installed_at:previous?.installed_at||plan.created_at,last_apply_at:plan.created_at,plan_sha256:hash,
       vault:{path:plan.answers.vault,real:realFuture(plan.answers.vault),vault_id:pointer.vault_id},runtime_root:vaultInfo.runtimeRoot,backups_dir:ctx.dirs.backups,
       entries:[...entries.values()].filter(e=>e.path!==ctx.dirs.manifest&&e.path!==ctx.dirs.machine&&!under(e.path,ctx.dirs.backups)),registrations:result.registrations,pending_hosts:result.pending_hosts.map(host=>({host,reason:'host unavailable or deferred'})),left_alone:plan.untouched.map(p=>({path:p,why:'retained'})),observed:{node:ctx.nodeVersion},warnings:result.warnings,journal:journalPath};
     validateManifest(manifest);

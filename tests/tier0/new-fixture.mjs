@@ -72,7 +72,7 @@ export async function installed(tmp, repo, source, label) {
     const config = {...template, profile:id, vault:path.join(root, 'vault-' + id),
       runtime_root:path.join(dirs.run, id), gemini:{provider:'agy'}, prompt_form:'split',
       server_name:'council', created_at:new Date().toISOString(),
-      layout:{work_dir:'work',jobs_dir:'work/jobs',ledger_dir:'ledger'}, ...change};
+      layout:{work_dir:'work',jobs_dir:'work/jobs',ledger_dir:'ledger'}, created_by:'fixture', ...change};
     fs.mkdirSync(config.vault, {recursive:true});
     const configPath = json(path.join(dirs.etc, 'profiles', id, 'config.json'), config);
     json(path.join(path.dirname(configPath), 'accounts.json'), {accounts:{echo:{label:'local:echo'},gemini:{label:'google:default'}}});

@@ -4,10 +4,11 @@ import platform from '../../src/platform/index.js';
 import {readJSON,exists,which} from './survey.mjs';
 import {fail} from './dialogue.mjs';
 import {requireTTY,ask} from './attended.mjs';
+import version from '../../src/version.js';
 export async function login(options,ctx) {
   if(options.only&&!['claude','codex','gemini'].includes(options.only))throw fail('E-USAGE','Invalid --only.');
   const {output}=requireTTY(ctx),machine=readJSON(ctx.dirs.machine,{binaries:{}}),profile=options.profile||'default';
-  output.write('council-setup 0.1.0 · login\nI never automate a login, never ask for a password, and never read, store or forward a vendor credential.\n');
+  output.write('council-setup '+version.APP_VERSION+' · login\nI never automate a login, never ask for a password, and never read, store or forward a vendor credential.\n');
   const steps=[];
   for(const kind of options.only?[options.only]:['claude','codex','gemini']) {
     if(kind==='claude') {

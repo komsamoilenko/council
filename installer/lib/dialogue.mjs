@@ -2,12 +2,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline/promises';
+import version from '../../src/version.js';
 
 const catalogue = {
   'E-SETKEY-NON-TTY': [2,'Key deletion requires a terminal','each key deletion needs attended confirmation','Run set-key --delete in an interactive terminal.'],
   'E-NODE-MISSING': [2, 'Node was not found', 'the installer needs Node', 'Install Node LTS from https://nodejs.org/en/download, then re-run.'],
   'E-NODE-OLD': [2, 'Node is below 20.11', 'this runtime is unsupported', 'Install Node LTS, then re-run.'],
-  'E-PLATFORM': [6, 'Platform capabilities are not implemented', '0.1.0 supports process supervision on Windows', 'Use Windows or plan with --allow-unsupported-platform.'],
+  'E-PLATFORM': [6, 'Platform capabilities are not implemented', version.APP_VERSION+' supports process supervision on Windows', 'Use Windows or plan with --allow-unsupported-platform.'],
   'E-VAULT-NOT-A-DIR': [2, 'The vault is not a directory', 'a vault must be a directory', 'Choose a directory with --vault.'],
   'E-VAULT-UNWRITABLE': [2, 'The first vault write failed', 'plan cannot test writability without writing; this is the first write council attempts', 'Make the vault writable and re-run apply.'],
   'E-VAULT-CONTAINS-APP-DATA': [2, 'The vault contains council app data', 'notes and the local installation must be separate', 'Choose a vault outside the council installation.'],

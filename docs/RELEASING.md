@@ -2,7 +2,15 @@
 
 This is a human-run publication procedure. Building the tools or staging a tree
 does not authorize a push, a tag or a release. The release is a tag on `main` in
-the existing public repository. Run these PowerShell commands from that checkout.
+the existing public repository. Run these PowerShell commands from that checkout. Every `<version>` below
+is the version you are cutting, typed in full — the commands are not copy-paste ready until you
+substitute it.
+
+First set the release version in both files that carry it: `APP_VERSION` in
+`src/version.js` and `version` in `package.json`. A bump is a two-file edit, and the
+two must name the same version: Tier-0 test T-32 and `stage-release.mjs` each refuse
+when they disagree. The T-24 version lint holds the version named in `README.md` and
+under `docs/` to that same value, so update those claims in the same commit.
 
 ```powershell
 node tests/run.mjs
@@ -23,7 +31,7 @@ inputs on `main` using your normal review process, then stage the clean tree:
 
 ```powershell
 node tools/stage-release.mjs --inventory-only
-node tools/stage-release.mjs --out "$env:TEMP\council-public" --version 0.1.0
+node tools/stage-release.mjs --out "$env:TEMP\council-public" --version <version>
 ```
 
 Use a new output directory with an existing parent outside the repository. Existing
@@ -55,8 +63,8 @@ Verify that `git rev-parse HEAD` equals `STAGED.json.source_commit` with its col
 removed, and that you are still on `main` at that clean commit. Tag that commit:
 
 ```powershell
-git tag -a v0.1.0 -m "council 0.1.0"
-git push origin v0.1.0
+git tag -a v<version> -m "council <version>"
+git push origin v<version>
 ```
 
 The annotated tag names the existing release commit; the push publishes that tag.
@@ -64,14 +72,14 @@ Each command must succeed before proceeding to the next. Create `dist` if absent
 
 ```powershell
 New-Item -ItemType Directory -Path dist
-git archive --format=zip --prefix=council-0.1.0/ -o dist\council-0.1.0.zip v0.1.0
-node tools/sha256.mjs dist\council-0.1.0.zip > dist\council-0.1.0.zip.sha256
+git archive --format=zip --prefix=council-<version>/ -o dist\council-<version>.zip v<version>
+node tools/sha256.mjs dist\council-<version>.zip > dist\council-<version>.zip.sha256
 ```
 
 The zip and staged tree contain the same tracked tree at the same commit, with
 `STAGED.json` present only as local staging evidence. Check that
 `STAGED.json.file_count` minus one equals the zip's file entries (exclude directory
-entries), and compare their relative paths after removing `council-0.1.0/` from
+entries), and compare their relative paths after removing `council-<version>/` from
 zip paths. `git archive` packages the tag with that single versioned top-level
 directory; it does not package uncommitted files or `dist` itself.
 
@@ -81,17 +89,17 @@ unpacking it. Use PowerShell 7 for the redirect above. In Windows PowerShell 5.1
 which redirects native text as UTF-16, use this ASCII-safe equivalent:
 
 ```powershell
-node tools/sha256.mjs dist\council-0.1.0.zip | Set-Content -Encoding ascii dist\council-0.1.0.zip.sha256
+node tools/sha256.mjs dist\council-<version>.zip | Set-Content -Encoding ascii dist\council-<version>.zip.sha256
 ```
 
 ```powershell
-gh release create v0.1.0 dist\council-0.1.0.zip dist\council-0.1.0.zip.sha256 --title "council 0.1.0" --notes-file docs\release-notes\0.1.0.md
+gh release create v<version> dist\council-<version>.zip dist\council-<version>.zip.sha256 --title "council <version>" --notes-file docs\release-notes\<version>.md
 ```
 
 `gh` is optional. Its command creates the GitHub release, uploads the two assets
 and uses the prepared release notes. The GitHub web UI or REST API can create the
-same release for `v0.1.0`: copy the notes and attach exactly `council-0.1.0.zip`
-and `council-0.1.0.zip.sha256`. `STAGED.json` is local evidence, never a release
+same release for `v<version>`: copy the notes and attach exactly `council-<version>.zip`
+and `council-<version>.zip.sha256`. `STAGED.json` is local evidence, never a release
 asset. No npm publication is part of this release.
 
 Hosted CI runs only `node --version` and the Node floor assertion, T-00 via

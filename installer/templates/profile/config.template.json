@@ -41,7 +41,7 @@
     "2024-11-05"
   ],
   "profile": "{{PROFILE}}",
-  "created_by": "council-setup 0.1.0",
+  "created_by": "council-setup",
   "created_at": "{{CREATED_AT}}",
   "server_name": "{{SERVER_NAME}}",
   "layout": {

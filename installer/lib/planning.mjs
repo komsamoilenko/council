@@ -12,6 +12,7 @@ import { entryState, validateManifest } from './manifest.mjs';
 import { safewrite, byteEdit } from './safewrite.mjs';
 import { planBytes, planFileHash } from './report.mjs';
 import { machineBytes } from './machine.mjs';
+import version from '../../src/version.js';
 import { stamp, scanDuplicates, reportTarget, publishDuplicate } from './duplicates.mjs';
 
 const repo = fileURLToPath(new URL('../../', import.meta.url));
@@ -135,9 +136,9 @@ export async function buildPlan(options, ctx) {
     if (exists(target) && !fs.readFileSync(target).equals(fs.readFileSync(source))) throw fail('E-NO-MANIFEST','Installed app differs: ' + target);
     add('S3',target,fs.readFileSync(source));
   }
-  add('S3',path.join(ctx.dirs.manifests,'app-0.1.0.json'),JSON.stringify({schema:1,version:'0.1.0',files:appFiles},null,2)+'\n',{ note: 'per-file SHA256 inventory' });
+  add('S3',path.join(ctx.dirs.manifests,'app-'+version.APP_VERSION+'.json'),JSON.stringify({schema:1,version:version.APP_VERSION,files:appFiles},null,2)+'\n',{ note: 'per-file SHA256 inventory' });
   add('S3',ctx.dirs.launcher,fs.readFileSync(path.join(repo,'bin','council-server.js')),{note:'stable launcher'});
-  add('S3',ctx.dirs.current,JSON.stringify({ ...readJSON(ctx.dirs.current), version: '0.1.0' },null,2)+'\n');
+  add('S3',ctx.dirs.current,JSON.stringify({ ...readJSON(ctx.dirs.current), version: version.APP_VERSION },null,2)+'\n');
   const relocated = a['relocate-runtime'];
   const layoutPaths = { work_dir: config?.layout?.work_dir || 'work', jobs_dir: relocated ? path.join(info.runtimeRoot,'jobs') : config?.layout?.jobs_dir || 'work/jobs', ledger_dir: relocated ? path.join(info.runtimeRoot,'ledger') : config?.layout?.ledger_dir || 'ledger' };
   if(transplanted&&!config) {
@@ -159,10 +160,10 @@ export async function buildPlan(options, ctx) {
   plan.layout = layoutPaths; plan.cloud_sync = { ...info.cloud, accepted: !!info.cloud?.synced && !relocated };
   const values = { VAULT: a.vault, OWNER: a.owner, CHAT_LANGUAGE: a['chat-language'], PROFILE: profile, CREATED_AT: plan.created_at,
     SERVER_NAME: a['register-as'] || 'council', RUNTIME_ROOT: info.runtimeRoot, WORK_DIR: layoutPaths.work_dir,
-    JOBS_DIR: layoutPaths.jobs_dir, LEDGER_DIR: layoutPaths.ledger_dir,
+    JOBS_DIR: layoutPaths.jobs_dir, LEDGER_DIR: layoutPaths.ledger_dir, APP_VERSION: version.APP_VERSION,
     LAYOUT: layout(a.vault,{workDir:layoutPaths.work_dir, conventions:a.conventions}) };
   const proposedConfig = JSON.parse(render(fs.readFileSync(path.join(templates,'profile','config.template.json'),'utf8'),values,{}, {json:true}));
-  add('S4',ctx.dirs.config,JSON.stringify({ ...proposedConfig, ...config, profile, vault:a.vault, runtime_root:info.runtimeRoot, layout:layoutPaths, server_name:values.SERVER_NAME, created_by:'council-setup 0.1.0' },null,2)+'\n');
+  add('S4',ctx.dirs.config,JSON.stringify({ ...proposedConfig, ...config, profile, vault:a.vault, runtime_root:info.runtimeRoot, layout:layoutPaths, server_name:values.SERVER_NAME, created_by:'council-setup '+version.APP_VERSION },null,2)+'\n');
   if (!exists(ctx.dirs.accounts)) add('S4',ctx.dirs.accounts,fs.readFileSync(path.join(templates,'profile','accounts.template.json')));
   add('S4',ctx.dirs.machine,machineBytes(readJSON(ctx.dirs.machine),detect,ctx,profile,{shared:false}),{note:'merge installer-owned machine keys; preserve all other keys'});
   for (const p of ['claude','codex','gemini','echo']) dir('S5',path.join(info.runtimeRoot,'sandbox',p));
@@ -170,7 +171,7 @@ export async function buildPlan(options, ctx) {
   for (const p of ['control','control/idem','control/sessions','reads']) dir('S5',path.join(info.runtimeRoot,p));
   for (const p of [layoutPaths.jobs_dir,layoutPaths.ledger_dir]) dir(under(path.resolve(a.vault,p),info.runtimeRoot)?'S5':'S6',path.resolve(a.vault,p));
   const flags = { INDEX: a.conventions || exists(path.join(a.vault,'INDEX.md')), CONVENTIONS: a.conventions };
-  const targetContract = { schema:1, profile, vault_id:contract?.vault_id || randomUUID(), contract_version:1, app_version:'0.1.0', installed_at:contract?.installed_at || plan.created_at, note:'Paths and credentials are local; this contract travels with the vault.' };
+  const targetContract = { schema:1, profile, vault_id:contract?.vault_id || randomUUID(), contract_version:1, app_version:version.APP_VERSION, installed_at:contract?.installed_at || plan.created_at, note:'Paths and credentials are local; this contract travels with the vault.' };
   add('S6',path.join(a.vault,'.council','vault.json'),JSON.stringify(targetContract,null,2)+'\n',{note:'path-free vault contract; preserve user keys', ...(contract ? { content: undefined } : {})});
   const contractWrite = steps.get('S6').writes.at(-1);
   if (contract && contractWrite?.path === path.join(a.vault,'.council','vault.json')) { contractWrite.content = JSON.stringify({...contract,...targetContract},null,2)+'\n'; contractWrite.bytes = Buffer.byteLength(contractWrite.content); }

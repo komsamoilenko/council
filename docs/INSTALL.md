@@ -73,7 +73,7 @@ Registration occurs only after Tier 0 passes.
 
 | Location | What apply writes |
 |---|---|
-| `%LOCALAPPDATA%\council\app\0.1.0` | Versioned runtime |
+| `%LOCALAPPDATA%\council\app\<version>` | Versioned runtime |
 | `%LOCALAPPDATA%\council\bin` | Stable server launcher |
 | `%LOCALAPPDATA%\council\current.json` | Current-version pointer |
 | `%LOCALAPPDATA%\council\etc` | Machine configuration, profiles, manifests, journal and backups |

@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {context,nativeProbe,readJSON,exists,linked,under} from './survey.mjs';
 import platform from '../../src/platform/index.js';
 import {safewrite} from './safewrite.mjs';
+import version from '../../src/version.js';
 
 export async function doctorProbe(ctx) {
   const started=Date.now(), attributes=new Map();
@@ -88,7 +89,7 @@ export async function doctorProbe(ctx) {
           }catch(e){stop(e);}
         }
       });
-      send({id:1,method:'initialize',params:{protocolVersion:'2024-11-05',capabilities:{},clientInfo:{name:'council-verify',version:'0.1.0'}}});
+      send({id:1,method:'initialize',params:{protocolVersion:'2024-11-05',capabilities:{},clientInfo:{name:'council-verify',version:version.APP_VERSION}}});
     });
   } finally {
     attributes.clear();

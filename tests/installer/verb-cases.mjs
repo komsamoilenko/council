@@ -160,7 +160,14 @@ export async function verbCases(make,tree) {
     const migrating=['migrate','edited-contract'].includes(scenario);
     const f=await make(migrating?'conflicting-agents':'empty');await apply(f.options,f.ctx);
     const files=[];const walk=dir=>{for(const e of fs.readdirSync(dir,{withFileTypes:true})){const p=path.join(dir,e.name);if(e.isDirectory())walk(p);else files.push(['src/'+path.relative(f.ctx.dirs.app,p).replaceAll('\\','/'),fs.readFileSync(p)]);}};walk(f.ctx.dirs.app);
-    files.find(([p])=>p==='src/version.js')[1]=Buffer.from(files.find(([p])=>p==='src/version.js')[1].toString().replace("APP_VERSION: '0.1.0'","APP_VERSION: '0.1.1'"));
+    const versionEntry=files.find(([p])=>p==='src/version.js');
+    const cur=/APP_VERSION:\s*'([^']+)'/.exec(versionEntry[1].toString())[1];
+    const next=cur.replace(/(\d+)$/,m=>String(Number(m)+1));
+    assert.notEqual(next,cur,'fixture must fabricate a newer release');
+    assert.equal(path.basename(f.ctx.dirs.app),cur,'installed tree is named by APP_VERSION');
+    versionEntry[1]=Buffer.from(versionEntry[1].toString().replace(/APP_VERSION:\s*'[^']+'/,"APP_VERSION: '"+next+"'"));
+    const nextRe=new RegExp("APP_VERSION: '"+next.replace(/\./g,'\\.')+"'");
+    assert.match(versionEntry[1].toString(),nextRe,'substitution applied');
     if(migrating) {
       const version=files.find(([p])=>p==='src/version.js');version[1]=Buffer.from(version[1].toString().replace('CONFIG_SCHEMA: 2','CONFIG_SCHEMA: 3').replace('CONTRACT_VERSION: 1','CONTRACT_VERSION: 2'));
       const templates=path.resolve(import.meta.dirname,'../../installer/templates');
@@ -173,7 +180,7 @@ export async function verbCases(make,tree) {
     const before=fs.readFileSync(f.ctx.dirs.current);
     if(scenario==='running-job')put(path.join(f.vault,'work','jobs','job','state.json'),'{"state":"running"}');
     let staged;
-    const result=await update({}, {...f.ctx,tier0:async c=>{staged=c.dirs.app;assert.ok(staged.endsWith('0.1.1.partial'));assert.match(fs.readFileSync(path.join(staged,'version.js'),'utf8'),/0.1.1/);if(scenario==='tier0-fail')throw new Error('fixture failed');return scenario==='real-stage'?tier0(c):'staged fixture passed';}});
+    const result=await update({}, {...f.ctx,tier0:async c=>{staged=c.dirs.app;assert.ok(staged.endsWith(next+'.partial'));assert.match(fs.readFileSync(path.join(staged,'version.js'),'utf8'),nextRe);if(scenario==='tier0-fail')throw new Error('fixture failed');return scenario==='real-stage'?tier0(c):'staged fixture passed';}});
     assert.ok(staged);
     if(scenario==='real-stage') {assert.equal(result.exitCode,0,JSON.stringify(result));assert.match(result.tier0,/0 failed/);process.stdout.write('PASS real staged-version Tier-0 fast\n');}
     else if(scenario==='prune') {
@@ -182,7 +189,7 @@ export async function verbCases(make,tree) {
       const busy=await update({'prune-versions':true,keep:1},{...f.ctx,platform:{...f.ctx.platform,commandLines:()=>['node '+path.join(f.ctx.dirs.app,'server.js')]}});
       assert.equal(busy.exitCode,4);assert.equal(busy.reason,'version_in_use');assert.deepEqual(tree(f.dir),snapshot);
       const unknown=await update({'prune-versions':true,keep:1},{...f.ctx,platform:{...f.ctx.platform,commandLines:()=>null}});assert.equal(unknown.exitCode,4);assert.deepEqual(tree(f.dir),snapshot);
-      const pruned=await update({'prune-versions':true,keep:1},{...f.ctx,platform:{...f.ctx.platform,commandLines:()=>[]}});assert.equal(pruned.exitCode,0,JSON.stringify(pruned));assert.equal(fs.existsSync(f.ctx.dirs.app),false);assert.equal(fs.existsSync(path.join(path.dirname(f.ctx.dirs.app),'0.1.1')),true);
+      const pruned=await update({'prune-versions':true,keep:1},{...f.ctx,platform:{...f.ctx.platform,commandLines:()=>[]}});assert.equal(pruned.exitCode,0,JSON.stringify(pruned));assert.equal(fs.existsSync(f.ctx.dirs.app),false);assert.equal(fs.existsSync(path.join(path.dirname(f.ctx.dirs.app),next)),true);
     }else if(migrating) {
       assert.equal(result.exitCode,0,JSON.stringify(result));assert.equal(JSON.parse(fs.readFileSync(f.ctx.dirs.config)).schema,3);
       const agents=path.join(f.vault,'AGENTS.md'),mf=JSON.parse(fs.readFileSync(f.ctx.dirs.manifest));
@@ -190,7 +197,7 @@ export async function verbCases(make,tree) {
       else {assert.match(fs.readFileSync(agents,'utf8'),/Updated contract/);assert.equal(mf.entries.find(e=>e.path===agents).contract_version,2);}
       assert.ok(Object.keys(tree(f.ctx.dirs.backups)).some(p=>path.basename(p)==='config.json'));
     }else if(scenario==='promote-rollback') {
-      assert.equal(result.exitCode,0,JSON.stringify(result));assert.equal(JSON.parse(fs.readFileSync(f.ctx.dirs.current)).version,'0.1.1');assert.ok(fs.existsSync(f.ctx.dirs.app));
+      assert.equal(result.exitCode,0,JSON.stringify(result));assert.equal(JSON.parse(fs.readFileSync(f.ctx.dirs.current)).version,next);assert.ok(fs.existsSync(f.ctx.dirs.app));
       const snapshot=tree(f.dir),rollback=await update({rollback:true},f.ctx);assert.equal(rollback.exitCode,0);assert.deepEqual(fs.readFileSync(f.ctx.dirs.current),before);const after=tree(f.dir);delete after[f.ctx.dirs.current];delete snapshot[f.ctx.dirs.current];assert.deepEqual(after,snapshot);
     }else {assert.equal(result.exitCode,scenario==='tier0-fail'?1:4,JSON.stringify(result));assert.deepEqual(fs.readFileSync(f.ctx.dirs.current),before);}
     count++;

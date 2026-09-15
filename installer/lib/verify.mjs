@@ -10,6 +10,7 @@ import {scanMarkers} from './markers.mjs';
 import {tokenizeToml} from './tomlblock.mjs';
 import {safewrite} from './safewrite.mjs';
 import {tier0} from './apply.mjs';
+import version from '../../src/version.js';
 import {NOTICE} from './report.mjs';
 import integrity from '../../src/lib/integrity.js';
 import redact from '../../src/lib/redact.js';
@@ -59,7 +60,7 @@ export async function verifyHandshake(r,ctx,expected) {
         }catch(e){stop(e);}
       }
     });
-    send({id:1,method:'initialize',params:{protocolVersion:'2024-11-05',capabilities:{},clientInfo:{name:'council-verify',version:'0.1.0'}}});
+    send({id:1,method:'initialize',params:{protocolVersion:'2024-11-05',capabilities:{},clientInfo:{name:'council-verify',version:version.APP_VERSION}}});
   });
 }
 

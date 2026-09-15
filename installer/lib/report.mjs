@@ -1,5 +1,6 @@
 // Owns the mandatory D2 report and stable human survey rendering; specification §7.3.
 import { createHash } from 'node:crypto';
+import version from '../../src/version.js';
 export function planBytes(plan) {
   const { file_sha256, ...document } = plan;
   return JSON.stringify(document,null,2)+'\n';
@@ -11,7 +12,7 @@ export function planReport(plan) {
   const create = writes.filter(w => w.action === 'create'), append = writes.filter(w => w.action === 'block'), rewrite = writes.filter(w => w.action === 'rewrite');
   const describe = w => w.path + (w.directory ? ' (directory, 0 bytes)' : w.bytes === null || w.bytes === undefined ? ' (size determined by apply)' : ` (${w.bytes} bytes)`) + (w.note ? ' — ' + w.note : '');
   return [
-    `council-setup 0.1.0 · plan  (profile: ${plan.profile} · vault: ${plan.answers.vault})`, NOTICE, '',
+    `council-setup ${version.APP_VERSION} · plan  (profile: ${plan.profile} · vault: ${plan.answers.vault})`, NOTICE, '',
     `WILL CREATE (${create.length})             ${create.map(describe).join('\n                           ') || 'none'}`,
     `WILL APPEND A MARKED BLOCK TO (${append.length})   ${append.map(w => `${w.path}  ${w.beforeBytes} → ${w.bytes} bytes  backup → ${w.backup}${w.note ? ' — ' + w.note : ''}`).join('\n                                  ') || 'none'}`,
     `WILL REWRITE (semantics preserved) (${rewrite.length})      ${rewrite.map(w => `${w.path} (${w.note || 'installer-owned keys only'}) — backup → ${w.backup}`).join(' · ') || 'none'}   — each backed up whole first`,
@@ -26,5 +27,5 @@ export function planReport(plan) {
 }
 export function detectReport(detect) {
   const ordered = [...detect.blocks.filter(b => b.name === 'journal' && b.journals.length), ...detect.blocks.filter(b => b.name !== 'journal' || !b.journals.length)];
-  return `council-setup 0.1.0 · detect (profile: ${detect.profile})\n` + ordered.map(({name, ...facts}) => `${name}: ${JSON.stringify(facts)}`).join('\n') + '\n' + detect.warnings.map(w => 'WARNING: ' + w).join('\n') + '\n';
+  return `council-setup ${version.APP_VERSION} · detect (profile: ${detect.profile})\n` + ordered.map(({name, ...facts}) => `${name}: ${JSON.stringify(facts)}`).join('\n') + '\n' + detect.warnings.map(w => 'WARNING: ' + w).join('\n') + '\n';
 }

@@ -8,6 +8,7 @@ import { writeHostSplice } from './safewrite.mjs';
 import { entryHash } from './manifest.mjs';
 import { scanMarkers, hashBody } from './markers.mjs';
 import platform from '../../src/platform/index.js';
+import version from '../../src/version.js';
 
 export function registrationEdit(r, before) {
   if (!path.isAbsolute(r.command) || /\.(cmd|bat|ps1)$/i.test(r.command) || r.args.length !== 1 || !path.isAbsolute(r.args[0]) || Object.keys(r.env).some(k => !['COUNCIL_HOST','COUNCIL_PROFILE'].includes(k))) throw new Error('E_SHIM_REGISTRATION');
@@ -96,6 +97,6 @@ export async function doctorHandshake(r, ctx) {
         if(message.id===2){if(message.result?.isError || !message.result?.content)return finish(new Error('host_doctor_failed'));finish(null,message.result);}
       }
     });
-    send({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2024-11-05',capabilities:{},clientInfo:{name:'council-setup',version:'0.1.0'}}});
+    send({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2024-11-05',capabilities:{},clientInfo:{name:'council-setup',version:version.APP_VERSION}}});
   });
 }

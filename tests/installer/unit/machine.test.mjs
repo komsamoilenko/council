@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import platform from '../../../src/platform/index.js';
+import version from '../../../src/version.js';
 import {machineBytes} from '../../../installer/lib/machine.mjs';
 import {vendoredRipgrep,sha256} from '../../../installer/lib/survey.mjs';
 
@@ -18,6 +19,8 @@ export default async function(test) {
     const ctx={node:process.execPath,dirs:{id:'win32',skill:path.join(root,'SKILL.md')},now:()=>new Date('2026-09-11T00:00:00Z'),platform:{systemBinaries:()=>({powershell:'fixture',tasklist:'fixture',taskkill:'fixture'})}};
     const render=machine=>JSON.parse(machineBytes(machine,detect,ctx,'default'));
     const doc=render(null);
+    assert.equal(doc.written_by,'council-setup '+version.APP_VERSION);
+    assert.deepEqual(doc.shared.app_versions,[version.APP_VERSION]);
     assert.deepEqual(Object.keys(doc).sort(),Object.keys(template).sort());
     assert.deepEqual(Object.keys(doc.binaries).sort(),Object.keys(template.binaries).sort());
     assert.equal(doc.binaries.gemini_api_js,template.binaries.gemini_api_js);
@@ -26,6 +29,7 @@ export default async function(test) {
     assert.deepEqual(doc.notice_ack,{notice_sha256:sha256(fs.readFileSync(new URL('../../../NOTICE.md',import.meta.url))),accepted_at:doc.written_at});
     const old={...doc,custom:'kept',binaries:{...doc.binaries,custom:'kept'},shared:{...doc.shared,custom:'kept',profiles:['other']}};
     const merged=render(old);assert.equal(merged.custom,'kept');assert.equal(merged.binaries.custom,'kept');assert.equal(merged.shared.custom,'kept');assert.deepEqual(merged.shared.profiles,['other','default']);assert.deepEqual(merged.notice_ack,old.notice_ack);
+    assert.deepEqual(render({...doc,shared:{...doc.shared,app_versions:['0.0.9']}}).shared.app_versions,['0.0.9',version.APP_VERSION],'an older recorded version is retained and the running one appended');
     ctx.now=()=>new Date('2026-09-12T00:00:00Z');
     assert.deepEqual(render(merged),merged,'an unchanged plan preserves its write timestamp');
     clis.codex.version='0.153.3';assert.equal(render(merged).written_at,ctx.now().toISOString());

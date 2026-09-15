@@ -15,6 +15,7 @@ import {sha256} from '../../installer/lib/manifest.mjs';
 import {registrationMatches,registrationEdit} from '../../installer/lib/registration.mjs';
 import {appdirs} from '../../installer/lib/appdirs.mjs';
 import {assertHostTargetsOutsideProfile} from './sandbox-assertions.mjs';
+import version from '../../src/version.js';
 
 export async function applyCases(root,base) {
   let count=0,serial=0;
@@ -161,7 +162,18 @@ export async function applyCases(root,base) {
   }
   {
     const f=await make('obsidian-like');const result=await apply(f.options,{...f.ctx,tier0});
-    assert.match(result.tier0,/Tier 0/);process.stdout.write(result.tier0);count++;
+    assert.match(result.tier0,/Tier 0/);
+    const cur=JSON.parse(fs.readFileSync(f.ctx.dirs.current,'utf8'));
+    assert.equal(cur.version,version.APP_VERSION,'current.json names the installed app version');
+    assert.equal(path.basename(f.ctx.dirs.app),version.APP_VERSION);
+    assert.equal(fs.existsSync(path.join(f.ctx.dirs.root,'app',cur.version,'server.js')),true,'current.json selects the installed tree');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(f.ctx.dirs.manifests,'app-'+version.APP_VERSION+'.json'),'utf8')).version,version.APP_VERSION);
+    assert.equal(JSON.parse(fs.readFileSync(f.ctx.dirs.manifest,'utf8')).app_version,version.APP_VERSION);
+    assert.deepEqual(JSON.parse(fs.readFileSync(f.ctx.dirs.machine,'utf8')).shared.app_versions,[version.APP_VERSION]);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(f.vault,'.council','vault.json'),'utf8')).app_version,version.APP_VERSION);
+    assert.equal(JSON.parse(fs.readFileSync(f.ctx.dirs.config,'utf8')).created_by,'council-setup '+version.APP_VERSION);
+    assert.ok(applyReport(result).startsWith('council-setup '+version.APP_VERSION+' · apply'));
+    process.stdout.write(result.tier0);count++;
   }
   {
     const f=await make('obsidian-like','all',false,ctx=>{

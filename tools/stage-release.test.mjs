@@ -49,7 +49,8 @@ try {
   const marker = path.join(copy, 'gate-started');
   fs.writeFileSync(path.join(copy, 'tests/run.mjs'), "import fs from 'node:fs'; fs.writeFileSync('gate-started', 'started');\n");
   const out = path.join(root, 'council-public');
-  const dirty = run(process.execPath, ['tools/stage-release.mjs', '--out', out, '--version', '0.1.0']);
+  const releaseVersion = JSON.parse(fs.readFileSync(path.join(copy, 'package.json'), 'utf8')).version;
+  const dirty = run(process.execPath, ['tools/stage-release.mjs', '--out', out, '--version', releaseVersion]);
   assert.ifError(dirty.error);
   assert.equal(dirty.status, 1);
   assert.equal(dirty.stderr, 'stage-release: REFUSED: working tree is dirty\n');
@@ -58,6 +59,31 @@ try {
   assert.equal(fs.existsSync(out), false, 'output absent');
   process.stdout.write(dirty.stderr);
   console.log('gate did not start: stdout empty; gate marker absent; output absent');
+
+  const mismatch = run(process.execPath, ['tools/stage-release.mjs', '--out', out, '--version', '9.9.9']);
+  assert.ifError(mismatch.error);
+  assert.equal(mismatch.status, 1);
+  assert.equal(mismatch.stderr, 'stage-release: REFUSED: version must match package.json and src/version.js\n');
+  assert.equal(fs.existsSync(out), false, 'output absent');
+  console.log('version mismatch refused before the gate: ' + mismatch.stderr.trim());
+
+  // The src/version.js half on its own: agreeing with package.json must not be enough.
+  const runtimeFile = path.join(copy, 'src/version.js');
+  const runtimeSource = fs.readFileSync(runtimeFile, 'utf8');
+  const runtimeVersion = /APP_VERSION:\s*'([^']+)'/.exec(runtimeSource)[1];
+  assert.equal(runtimeVersion, releaseVersion, 'the clone starts with package.json and src/version.js in step');
+  const drifted = runtimeVersion.replace(/(\d+)$/, patch => String(Number(patch) + 1));
+  assert.notEqual(drifted, runtimeVersion, 'the fixture must fabricate a different runtime version');
+  fs.writeFileSync(runtimeFile, runtimeSource.replace(/APP_VERSION:\s*'[^']+'/, "APP_VERSION: '" + drifted + "'"));
+  const runtimeDrift = run(process.execPath, ['tools/stage-release.mjs', '--out', out, '--version', releaseVersion]);
+  fs.writeFileSync(runtimeFile, runtimeSource);
+  assert.ifError(runtimeDrift.error);
+  assert.equal(runtimeDrift.status, 1);
+  assert.equal(runtimeDrift.stderr, 'stage-release: REFUSED: version must match package.json and src/version.js\n');
+  assert.equal(runtimeDrift.stdout, '', 'no RUN line: gate never started');
+  assert.equal(fs.existsSync(marker), false, 'gate marker absent');
+  assert.equal(fs.existsSync(out), false, 'output absent');
+  console.log('src/version.js drift refused although package.json agreed: ' + runtimeDrift.stderr.trim());
 } finally {
   const resolved = fs.realpathSync(root);
   assert.equal(path.dirname(resolved), base);
