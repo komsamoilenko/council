@@ -6,7 +6,7 @@ The installer enforces Node **20.11.0** as its minimum and warns below 24.
 The recorded runtime and launcher test version is **24.11.1**. The launcher
 has not been established on the older floor; use Node 24 for the tested path.
 This is a compatibility statement about this build, not a claim that 24.11.1
-is the latest Node release. Application version is 0.1.0; configuration schema
+is the latest Node release. Application version is 0.1.1; configuration schema
 is 2, contract and manifest schemas are 1.
 
 Windows implements process supervision, secrets and file attributes. macOS
@@ -28,7 +28,7 @@ Here X means the version actually reported on your installation, not a sample
 version or a guaranteed supported floor. Missing or unparseable versions stay
 unknown. Command shims are refused and ambiguous executable candidates are
 reported as conflicts. Claude Desktop bundled CLI candidates are reported as
-found but not usable by 0.1.0.
+found but not usable by 0.1.1.
 
 ## Reading detect and doctor
 

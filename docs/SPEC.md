@@ -2,7 +2,7 @@
 
 ## Scope and authority
 
-This is the condensed normative contract for council 0.1.0 as implemented in
+This is the condensed normative contract for council 0.1.1 as implemented in
 `src/` and `installer/`. It describes the shipped Windows behavior. macOS and
 Linux have process/secrets/file-attribute stubs and refuse operations requiring
 those capabilities. [INTERFACES](INTERFACES.md) defines public arguments and

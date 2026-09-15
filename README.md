@@ -15,7 +15,7 @@ Claude Desktop / Claude Code / Codex app or extension
 
 ## Status
 
-Version 0.1.0 implements eight tools, the complete installer command set,
+Version 0.1.1 implements eight tools, the complete installer command set,
 three host registrations, multiple profiles, journalled recovery, git/zip
 updates and manifest-based uninstall. Windows is implemented. macOS/Linux
 ship stubs: diagnostics and permitted reads work, but starting consultations,
@@ -137,7 +137,7 @@ plans/reports. [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) covers host restart,
 shim, proxy and sign-in issues. `node tests/run.mjs` runs the local zero-quota
 gate; [TESTING](docs/TESTING.md) explains fixture isolation and skips.
 
-## Not in 0.1.0
+## Not in 0.1.1
 
 The following are deferred:
 
@@ -170,7 +170,7 @@ The following are deferred:
 - [INSTALLER-AUDIT-FIXES](docs/INSTALLER-AUDIT-FIXES.md) — installer audit decisions and fixes.
 - [INSTALLER-READ-ONLY-DECISIONS](docs/INSTALLER-READ-ONLY-DECISIONS.md) — read-only installer decisions.
 - [INSTALLER-VERBS](docs/INSTALLER-VERBS.md) — verification, update and uninstall details.
-- [Release notes 0.1.0](docs/release-notes/0.1.0.md) — shipped scope and deferrals.
+- [Release notes 0.1.1](docs/release-notes/0.1.1.md) — shipped scope and deferrals.
 
 Also read [NOTICE](NOTICE.md), [SECURITY](SECURITY.md) and
 [CONTRIBUTING](CONTRIBUTING.md).
