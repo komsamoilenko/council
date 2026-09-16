@@ -19,6 +19,9 @@
     "notice_sha256": "{{NOTICE_SHA256}}",
     "accepted_at": "{{CREATED_AT}}"
   },
+  "source": {
+    "channel": "{{SOURCE_CHANNEL}}"
+  },
   "shared": {
     "app_versions": [
       "{{APP_VERSION}}"

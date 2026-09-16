@@ -7,7 +7,9 @@ when absent. Names contain lowercase letters, digits, underscores or hyphens and
 with a letter or digit, with a maximum length of 32. The runner checks the profile saved
 in each job request before spawning a leaf.
 
-The machine owns binaries and the measured global npm root. Profiles own vault,
+The machine owns binaries, the measured global npm root and the update `source`:
+where `update` reads the next release from, recorded by `apply` from the tree the installer
+ran from and never overwritten once present (see [INSTALL](INSTALL.md)). Profiles own vault,
 runtime_root, layout, models, fuses, timing and account labels. Machine binaries replace
 profile binary values. The generic account labels are anthropic:default, openai:default,
 google:default and local:echo. Account labels describe spend and do not select credentials.

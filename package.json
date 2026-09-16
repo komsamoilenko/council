@@ -1,6 +1,11 @@
 {
   "name": "council",
   "version": "0.1.1",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/komsamoilenko/council.git"
+  },
+  "homepage": "https://github.com/komsamoilenko/council",
   "private": true,
   "license": "MIT",
   "type": "commonjs",

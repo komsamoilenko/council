@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import platform from '../../src/platform/index.js';
@@ -46,7 +47,9 @@ export function nativeProbe(file, args, options) {
 export function context(overrides = {}) {
   const env = overrides.env || process.env;
   const dirs = appdirs({ env, profile: overrides.profile || 'default' });
-  const ctx = { env, dirs, node: process.execPath, nodeVersion: process.version, probe: nativeProbe, now: () => new Date(), ...overrides };
+  // The tree this installer runs from: a git worktree when cloned, an extracted release otherwise. update reads it back.
+  const installerRoot = fileURLToPath(new URL('../../', import.meta.url));
+  const ctx = { env, dirs, node: process.execPath, nodeVersion: process.version, probe: nativeProbe, now: () => new Date(), installerRoot, ...overrides };
   ctx.run = (file, args, extra = {}) => ctx.probe(file, args, { ...extra, cwd: os.tmpdir(), env: extra.env || ctx.env, shell: false });
   // Do not use platform.fileAttributes here: its internal probe uses the caller's cwd.
   ctx.attributes ||= async file => {

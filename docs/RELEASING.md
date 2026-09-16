@@ -68,20 +68,32 @@ git push origin v<version>
 ```
 
 The annotated tag names the existing release commit; the push publishes that tag.
-Each command must succeed before proceeding to the next. Create `dist` if absent:
+Each command must succeed before proceeding to the next. Build the archive **outside the
+repository**: the personal-data scanner reads the whole working tree without exemptions,
+ignored files included, and a zip or a sha256 sidecar inside the tree fails T-27 and blocks
+the next staging. Use a fresh directory under the system temp directory:
 
 ```powershell
-New-Item -ItemType Directory -Path dist
-git archive --format=zip --prefix=council-<version>/ -o dist\council-<version>.zip v<version>
-node tools/sha256.mjs dist\council-<version>.zip > dist\council-<version>.zip.sha256
+$dist = New-Item -ItemType Directory -Path "$env:TEMP\council-dist-<version>"
+git archive --format=zip --prefix=council-<version>/ -o "$dist\council-<version>.zip" v<version>
+node tools/sha256.mjs "$dist\council-<version>.zip" > "$dist\council-<version>.zip.sha256"
+Copy-Item "$dist\council-<version>.zip" "$dist\council-latest.zip"
+Copy-Item "$dist\council-<version>.zip.sha256" "$dist\council-latest.zip.sha256"
 ```
+
+The two `council-latest` files are byte-for-byte copies of the versioned pair. They exist
+so that an installation made from an extracted release can update without knowing the
+next version's name: its recorded `source` points at
+`<repository>/releases/latest/download/council-latest.zip`, which GitHub resolves to the
+newest published release, and `update` verifies the download against the sidecar next to
+it. Every release must attach both copies or that channel breaks for every zip install.
 
 The zip and staged tree contain the same tracked tree at the same commit, with
 `STAGED.json` present only as local staging evidence. Check that
 `STAGED.json.file_count` minus one equals the zip's file entries (exclude directory
 entries), and compare their relative paths after removing `council-<version>/` from
 zip paths. `git archive` packages the tag with that single versioned top-level
-directory; it does not package uncommitted files or `dist` itself.
+directory; it does not package uncommitted files.
 
 `sha256.mjs` prints only a lowercase SHA-256 digest and LF. The updater reads the
 sidecar's first whitespace-delimited token and verifies the downloaded zip before
@@ -89,18 +101,18 @@ unpacking it. Use PowerShell 7 for the redirect above. In Windows PowerShell 5.1
 which redirects native text as UTF-16, use this ASCII-safe equivalent:
 
 ```powershell
-node tools/sha256.mjs dist\council-<version>.zip | Set-Content -Encoding ascii dist\council-<version>.zip.sha256
+node tools/sha256.mjs "$dist\council-<version>.zip" | Set-Content -Encoding ascii "$dist\council-<version>.zip.sha256"
 ```
 
 ```powershell
-gh release create v<version> dist\council-<version>.zip dist\council-<version>.zip.sha256 --title "council <version>" --notes-file docs\release-notes\<version>.md
+gh release create v<version> "$dist\council-<version>.zip" "$dist\council-<version>.zip.sha256" "$dist\council-latest.zip" "$dist\council-latest.zip.sha256" --title "council <version>" --notes-file docs\release-notes\<version>.md
 ```
 
-`gh` is optional. Its command creates the GitHub release, uploads the two assets
+`gh` is optional. Its command creates the GitHub release, uploads the four assets
 and uses the prepared release notes. The GitHub web UI or REST API can create the
-same release for `v<version>`: copy the notes and attach exactly `council-<version>.zip`
-and `council-<version>.zip.sha256`. `STAGED.json` is local evidence, never a release
-asset. No npm publication is part of this release.
+same release for `v<version>`: copy the notes and attach exactly the four files above —
+`council-<version>.zip`, `council-<version>.zip.sha256`, `council-latest.zip` and
+`council-latest.zip.sha256`. `STAGED.json` is local evidence, never a release asset. No npm publication is part of this release.
 
 Hosted CI runs only `node --version` and the Node floor assertion, T-00 via
 `node tests/trust/run.mjs --lint-only`, T-24 and T-27 via

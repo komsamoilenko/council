@@ -2,8 +2,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+// The account name matches as a whole word: a longer identifier that merely starts with those
+// letters is not the machine account (the repository owner's public handle does), while every
+// path, host or address form — a separator, digit, underscore or symbol on either side — still is.
 const forbidden = [
-  ['kom','sa'],['Pay','sera'],['pay','sera\\.net'],['\\b','ps','r','\\b'],
+  ['(?<![A-Za-z])','kom','sa','(?![A-Za-z])'],['Pay','sera'],['pay','sera\\.net'],['\\b','ps','r','\\b'],
   ['anthropic:', 'cli'],['openai:chatgpt-', 'personal'],['google:', 'aipro'],
   ['app to work ', 'with AI'],['2026-09-07-council-', 'build'],['2026-09-07-council-', 'installer'],
 ].map(parts=>new RegExp(parts.join(''),'gi'));

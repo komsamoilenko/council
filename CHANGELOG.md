@@ -5,6 +5,26 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `update` could not run on any installation: it reads its channel from
+  `machine.json.source`, and nothing wrote that field. `apply` now records it from the
+  tree the installer ran from — a git clone's worktree, or the repository's fixed-name
+  `council-latest.zip` for an extracted release — and never overwrites a `source` set by
+  hand. An existing installation gets the field on its next `plan --hosts none` + `apply`.
+- The release archive is built outside the repository. The personal-data scanner reads the
+  whole working tree without exemptions, so a zip or sha256 sidecar built inside it failed
+  T-27 and blocked the next staging; RELEASING.md now builds under the system temp directory.
+- The account-name rule of the personal-data scanner matches a whole word. Every path, host
+  and address form still trips it; the repository owner's public handle, which merely begins
+  with the same letters, no longer does, so `package.json` can name the repository.
+
+### Changed
+
+- Every release attaches `council-latest.zip` and its `.sha256` beside the versioned pair,
+  so that zip installs can update through `releases/latest/download`.
+- `package.json` names the repository and homepage.
+
 ## [0.1.1] - 2026-09-15
 
 ### Fixed

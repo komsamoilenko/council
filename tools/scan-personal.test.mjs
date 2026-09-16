@@ -53,6 +53,28 @@ try {
     assert.equal(scan(root).hits.some(h=>h.rule===11),hit,value);
   }
 
+  // The account name is a whole-word rule: every path, host, address and symbol form still
+  // trips it, while a longer identifier that merely begins with those letters — the public
+  // repository owner handle — is not the machine account (A-64).
+  fs.readdirSync=()=>[entry('account.txt','file')];
+  const handle=account+'moilenko';
+  const accountForms=[
+    ['C:\\Users\\'+account+'\\file.txt',true],
+    [account+'@host',true],
+    ['\\\\'+account+'-pc\\share',true],
+    [account+'_dev',true],
+    [account+'1',true],
+    [account.toUpperCase(),true],
+    [account+'.local',true],
+    ['https://github.com/'+handle+'/council',false],
+    ['git+https://github.com/'+handle+'/council.git',false],
+    ['x'+account,false],
+  ];
+  for(const [value,hit] of accountForms) {
+    readFixture=()=>Buffer.from(value);
+    assert.equal(scan(root).hits.some(h=>h.rule===0),hit,value);
+  }
+
   for(const [label,size,reason] of [
     ['9 MiB one-line file',9*1024*1024,'file_too_large'],
     ['100 KiB single line',100*1024,'line_too_long'],

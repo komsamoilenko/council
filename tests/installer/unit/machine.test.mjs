@@ -3,7 +3,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import platform from '../../../src/platform/index.js';
 import version from '../../../src/version.js';
-import {machineBytes} from '../../../installer/lib/machine.mjs';
+import {machineBytes,updateSource,LATEST_ASSET} from '../../../installer/lib/machine.mjs';
 import {vendoredRipgrep,sha256} from '../../../installer/lib/survey.mjs';
 
 export default async function(test) {
@@ -16,9 +16,11 @@ export default async function(test) {
     const clis={claude:{usable:true,path:path.join(root,'claude.exe'),version:'2.1.263'},codex:{usable:true,path:codex,version:'0.153.2',rg:vendoredRipgrep(codex)}};
     assert.equal(clis.codex.rg,rg);
     const detect={blocks:[{name:'clis',clis},{name:'node',version:'24.11.1'},{name:'npm',root}]};
-    const ctx={node:process.execPath,dirs:{id:'win32',skill:path.join(root,'SKILL.md')},now:()=>new Date('2026-09-11T00:00:00Z'),platform:{systemBinaries:()=>({powershell:'fixture',tasklist:'fixture',taskkill:'fixture'})}};
+    fs.mkdirSync(path.join(root,'.git'));
+    const ctx={node:process.execPath,dirs:{id:'win32',skill:path.join(root,'SKILL.md')},now:()=>new Date('2026-09-11T00:00:00Z'),platform:{systemBinaries:()=>({powershell:'fixture',tasklist:'fixture',taskkill:'fixture'})},installerRoot:root};
     const render=machine=>JSON.parse(machineBytes(machine,detect,ctx,'default'));
     const doc=render(null);
+    assert.deepEqual(doc.source,{channel:'git',worktree:root,ref:'HEAD'},'an installer run from a git worktree records that worktree as the update source');
     assert.equal(doc.written_by,'council-setup '+version.APP_VERSION);
     assert.deepEqual(doc.shared.app_versions,[version.APP_VERSION]);
     assert.deepEqual(Object.keys(doc).sort(),Object.keys(template).sort());
@@ -40,5 +42,30 @@ export default async function(test) {
     fs.rmdirSync(path.dirname(rg));fs.symlinkSync(outside,path.dirname(rg),'junction');
     assert.equal(vendoredRipgrep(codex),null);
     process.stdout.write('PASS hydration template keys all; rg absent for missing, directory and escaping junction fixtures\n');
+  });
+  await test('update source: git worktree, extracted release, unknown origin, and a hand-set source kept',async root=>{
+    const clis={claude:{usable:false,path:null,version:null},codex:{usable:false,path:null,version:null,rg:null}};
+    const detect={blocks:[{name:'clis',clis},{name:'node',version:'24.11.1'},{name:'npm',root}]};
+    const base={node:process.execPath,dirs:{id:'win32',skill:path.join(root,'SKILL.md')},now:()=>new Date('2026-09-16T00:00:00Z'),platform:{systemBinaries:()=>({powershell:'fixture',tasklist:'fixture',taskkill:'fixture'})}};
+    const render=(machine,installerRoot)=>JSON.parse(machineBytes(machine,detect,{...base,installerRoot},'default'));
+    // A git worktree: update reads its checkout.
+    const clone=path.join(root,'clone');fs.mkdirSync(path.join(clone,'.git'),{recursive:true});
+    assert.deepEqual(updateSource({installerRoot:clone}),{channel:'git',worktree:clone,ref:'HEAD'});
+    // An extracted release: the repository's latest fixed-name asset, from package.json, either repository form.
+    const extracted=path.join(root,'extracted');fs.mkdirSync(extracted);
+    fs.writeFileSync(path.join(extracted,'package.json'),JSON.stringify({name:'council',repository:{type:'git',url:'git+https://github.com/example-owner/council.git'}}));
+    assert.deepEqual(updateSource({installerRoot:extracted}),{channel:'zip',asset:'https://github.com/example-owner/council/releases/latest/download/'+LATEST_ASSET});
+    fs.writeFileSync(path.join(extracted,'package.json'),JSON.stringify({name:'council',repository:'https://github.com/example-owner/council'}));
+    assert.deepEqual(updateSource({installerRoot:extracted}).asset,'https://github.com/example-owner/council/releases/latest/download/'+LATEST_ASSET);
+    // Unknown origin records nothing rather than guessing, and the key is absent from the document.
+    const bare=path.join(root,'bare');fs.mkdirSync(bare);
+    assert.equal(updateSource({installerRoot:bare}),null);
+    assert.equal(updateSource({}),null);
+    assert.equal('source' in render(null,bare),false);
+    // A source the user set by hand survives a re-apply from anywhere.
+    const own={channel:'zip',asset:'https://example.invalid/council.zip'};
+    assert.deepEqual(render({schema:2,source:own},clone).source,own);
+    assert.deepEqual(render(null,clone).source,{channel:'git',worktree:clone,ref:'HEAD'});
+    process.stdout.write('PASS update source recorded from the installer tree and never overwritten\n');
   });
 }

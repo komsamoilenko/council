@@ -119,6 +119,21 @@ deletion returns `removed` and `exitCode`. `set-key --delete` requires a termina
 only that profile's key file. Regional billing guidance is in [NOTICE](../NOTICE.md).
 The Antigravity adapter ships disabled; see [NOTICE](../NOTICE.md).
 
+## Update
+
+`update` moves the installation to a newer release without touching the hosts: it stages
+the new tree beside the current one, runs the fast Tier-0 selection against it, refuses
+while any profile has a running job, then promotes it with one atomic rename. Where it
+reads the new release from is `source` in `machine.json`, which `apply` records from the
+tree the installer ran from: a git clone updates from that clone's checkout
+(`channel: git`, `worktree`, `ref: HEAD`); an extracted release updates from the
+repository's latest published release (`channel: zip`, `asset` naming the fixed
+`council-latest.zip` that every release attaches beside its versioned zip, verified against
+its `.sha256` sidecar). `update --check` reports whether a newer version is available
+and writes nothing. `--channel` and `--ref` override the recorded source for one run; a
+`source` you edit by hand is kept by every later `apply`. An installation made before
+this field existed gets it on the next `plan --hosts none` + `apply`.
+
 ## Exit codes and recovery
 
 | Code | Meaning | Next action |
